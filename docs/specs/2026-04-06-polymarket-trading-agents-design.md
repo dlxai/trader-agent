@@ -39,6 +39,18 @@
 - 月度 Sharpe ≥ 1.0
 - 宁可月收益 2-4% 稳定，不要爆发周大赚后回吐
 
+### 1.1.5 UI 设计约定（前瞻性）
+
+**当前阶段（M1-M4）项目是 headless 后端插件，没有 UI**。但**未来如果加任何前端**（dashboard、控制面板、报告页面、Phase 2 web 界面等），所有视觉设计**必须**基于 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) 仓库里的 `DESIGN.md`，不允许任何子 agent 临场自创风格。
+
+**实施流程**：
+1. 当首次需要做 UI 时（不是现在），从 `awesome-design-md/design-md/` 里挑一个最贴近交易场景的 DESIGN.md（推荐 `coinbase` 或 `kraken`）
+2. 拷贝到本仓库根 `D:/work/polymarket-trader/DESIGN.md`
+3. 所有 UI 实现任务的 prompt 必须明确引用该 DESIGN.md，让 design agent 读到
+4. 如果某个任务希望偏离 DESIGN.md，必须在任务规格里明确标注偏离点并经人审
+
+**当前不做**：YAGNI 原则下，M1-M4 不会有任何 UI，所以**现在不复制 DESIGN.md**（避免预先承诺没用的东西）。仅记录约定。
+
 ### 1.2 非目标（YAGNI 严格剔除）
 
 首版**明确不做**的东西（等数据证明需要再加）：

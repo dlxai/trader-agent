@@ -19,7 +19,7 @@ describe("definePlugin", () => {
     const plugin = definePlugin({ id: "x", name: "X", setup });
     const fakeApi = {
       id: "x",
-      logger: { info: vi.fn(), warn: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       on: vi.fn(),
     };
     plugin.activate(fakeApi as any);
@@ -31,7 +31,7 @@ describe("definePlugin", () => {
     const plugin = definePlugin({ id: "x", name: "X", setup });
     const fakeApi = {
       id: "x",
-      logger: { info: vi.fn(), warn: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       on: vi.fn(),
     };
     plugin.register(fakeApi as any);
@@ -50,11 +50,30 @@ describe("definePlugin", () => {
     });
     const fakeApi = {
       id: "x",
-      logger: { info: vi.fn(), warn: vi.fn() },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       on: vi.fn(),
       registerTool,
     };
     plugin.activate(fakeApi as any);
     expect(registerTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mark tools optional when toolVisibility is 'always'", () => {
+    const registerTool = vi.fn();
+    const plugin = definePlugin({
+      id: "x",
+      name: "X",
+      tools: [{ name: "do_thing", description: "test", parameters: {} }],
+      toolVisibility: "always",
+      setup: () => {},
+    });
+    const fakeApi = {
+      id: "x",
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      on: vi.fn(),
+      registerTool,
+    };
+    plugin.activate(fakeApi as any);
+    expect(registerTool).toHaveBeenCalledWith(expect.any(Function), undefined);
   });
 });

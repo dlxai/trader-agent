@@ -394,25 +394,35 @@ export default defineConfig({
 }
 ```
 
-- [ ] **Step 6: Create minimal `src/index.ts`**
+- [ ] **Step 6: Create minimal `src/index.ts` (stub — refactored in Task 1.5)**
+
+To keep Task 1 building cleanly without yet depending on `plugin-sdk.ts` (which is created in Task 1.5), the bootstrap `index.ts` is a self-contained stub that does NOT import anything project-internal. Task 1.5 will refactor this file to import from `./plugin-sdk.js`.
 
 ```typescript
 /**
- * RivonClaw Polymarket Trader plugin.
+ * Polymarket Trader plugin entry point.
  *
- * See docs/superpowers/specs/2026-04-06-polymarket-trading-agents-design.md for design.
+ * This file is a bootstrap stub. Task 1.5 will refactor it to use the
+ * inlined plugin SDK at ./plugin-sdk.ts. Task 28 (plugin wiring) will
+ * then add the full Collector/Executor/Analyzer wiring.
+ *
+ * See docs/specs/2026-04-06-polymarket-trading-agents-design.md for design.
  */
-import { definePlugin } from "./plugin-sdk.js";
-import type { PluginApi } from "./plugin-sdk.js";
 
-export default definePlugin({
+// Bootstrap export — a no-op default export so the file is a valid ES module.
+// The real plugin definition arrives in Task 1.5.
+export default {
   id: "polymarket-trader",
   name: "Polymarket Trader",
-
-  setup(api: PluginApi) {
-    api.logger.info("[polymarket] plugin activated (bootstrap only — no runtime yet)");
+  activate(): void {
+    // intentional no-op until Task 1.5 wires up the inlined plugin SDK
+    // eslint-disable-next-line no-console
+    console.log("[polymarket] bootstrap plugin loaded (no runtime yet)");
   },
-});
+  register(): void {
+    this.activate();
+  },
+};
 ```
 
 - [ ] **Step 7: Create minimal `README.md`**
@@ -654,10 +664,40 @@ export function definePlugin(options: PluginOptions): OpenClawPlugin {
 Run: `pnpm test:run tests/plugin-sdk.test.ts`
 Expected: all 4 tests pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Refactor `src/index.ts` to use the new SDK**
+
+Replace the bootstrap stub with the real plugin definition:
+
+```typescript
+/**
+ * Polymarket Trader plugin entry point.
+ *
+ * Task 1.5: now uses the inlined plugin SDK. Task 28 will add full wiring.
+ *
+ * See docs/specs/2026-04-06-polymarket-trading-agents-design.md for design.
+ */
+import { definePlugin } from "./plugin-sdk.js";
+import type { PluginApi } from "./plugin-sdk.js";
+
+export default definePlugin({
+  id: "polymarket-trader",
+  name: "Polymarket Trader",
+
+  setup(api: PluginApi) {
+    api.logger.info("[polymarket] plugin activated (bootstrap only — no runtime yet)");
+  },
+});
+```
+
+- [ ] **Step 6: Verify build still passes**
+
+Run: `pnpm build && pnpm test:run`
+Expected: build success + plugin-sdk tests pass + smoke test still passes.
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/plugin-sdk.ts tests/plugin-sdk.test.ts
+git add src/plugin-sdk.ts src/index.ts tests/plugin-sdk.test.ts
 git commit -m "feat: inline OpenClaw plugin SDK helper (zero external deps)"
 ```
 

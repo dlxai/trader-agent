@@ -312,7 +312,7 @@ size         = capital × fraction × kelly_multiplier
 | `trade_count` | INTEGER |
 | `win_count` | INTEGER |
 | `win_rate` | REAL |
-| `total_pnl_net` | REAL |
+| `total_pnl_net_usdc` | REAL |
 | `last_updated` | INTEGER |
 
 ### 7.3 `filter_config`

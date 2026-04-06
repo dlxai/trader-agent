@@ -11,7 +11,9 @@ const CURRENT_VERSION = 1;
 
 export function runMigrations(db: Database.Database): void {
   const schemaSql = readFileSync(SCHEMA_SQL_PATH, "utf-8");
+  let txStarted = false;
   db.exec("BEGIN");
+  txStarted = true;
   try {
     db.exec(schemaSql);
     const existing = db
@@ -25,7 +27,7 @@ export function runMigrations(db: Database.Database): void {
     }
     db.exec("COMMIT");
   } catch (err) {
-    db.exec("ROLLBACK");
+    if (txStarted) db.exec("ROLLBACK");
     throw err;
   }
 }

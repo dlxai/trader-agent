@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
   trade_count INTEGER NOT NULL DEFAULT 0,
   win_count INTEGER NOT NULL DEFAULT 0,
   win_rate REAL NOT NULL DEFAULT 0.0,
-  total_pnl_net REAL NOT NULL DEFAULT 0.0,
+  total_pnl_net_usdc REAL NOT NULL DEFAULT 0.0,
   last_updated INTEGER NOT NULL,
   PRIMARY KEY (price_bucket, window)
 );

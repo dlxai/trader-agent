@@ -759,7 +759,7 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
   trade_count INTEGER NOT NULL DEFAULT 0,
   win_count INTEGER NOT NULL DEFAULT 0,
   win_rate REAL NOT NULL DEFAULT 0.0,
-  total_pnl_net REAL NOT NULL DEFAULT 0.0,
+  total_pnl_net_usdc REAL NOT NULL DEFAULT 0.0,
   last_updated INTEGER NOT NULL,
   PRIMARY KEY (price_bucket, window)
 );
@@ -5062,7 +5062,7 @@ describe("computeBucketStats", () => {
     expect(b50?.trade_count).toBe(4);
     expect(b50?.win_count).toBe(2);
     expect(b50?.win_rate).toBe(0.5);
-    expect(b50?.total_pnl_net).toBe(10);
+    expect(b50?.total_pnl_net_usdc).toBe(10);
   });
 
   it("separates different buckets", () => {
@@ -5089,7 +5089,7 @@ export interface BucketStats {
   trade_count: number;
   win_count: number;
   win_rate: number;
-  total_pnl_net: number;
+  total_pnl_net_usdc: number;
 }
 
 export function computeBucketStats(
@@ -5114,7 +5114,7 @@ export function computeBucketStats(
       trade_count: agg.count,
       win_count: agg.wins,
       win_rate: agg.count > 0 ? agg.wins / agg.count : 0,
-      total_pnl_net: agg.pnl,
+      total_pnl_net_usdc: agg.pnl,
     });
   }
   return out.sort((a, b) => a.price_bucket - b.price_bucket);
@@ -5144,7 +5144,7 @@ import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 describe("decideKillSwitch", () => {
   it("does not kill with fewer than minTrades samples", () => {
     const decision = decideKillSwitch(
-      { trade_count: 5, win_count: 1, win_rate: 0.2, total_pnl_net: -5 },
+      { trade_count: 5, win_count: 1, win_rate: 0.2, total_pnl_net_usdc: -5 },
       DEFAULT_CONFIG
     );
     expect(decision.kill).toBe(false);
@@ -5152,7 +5152,7 @@ describe("decideKillSwitch", () => {
 
   it("kills when trade_count >= min and win_rate < max_win_rate", () => {
     const decision = decideKillSwitch(
-      { trade_count: 10, win_count: 3, win_rate: 0.30, total_pnl_net: -20 },
+      { trade_count: 10, win_count: 3, win_rate: 0.30, total_pnl_net_usdc: -20 },
       DEFAULT_CONFIG
     );
     expect(decision.kill).toBe(true);
@@ -5161,7 +5161,7 @@ describe("decideKillSwitch", () => {
 
   it("does not kill at exactly the threshold", () => {
     const decision = decideKillSwitch(
-      { trade_count: 10, win_count: 5, win_rate: 0.50, total_pnl_net: 0 },
+      { trade_count: 10, win_count: 5, win_rate: 0.50, total_pnl_net_usdc: 0 },
       DEFAULT_CONFIG
     );
     expect(decision.kill).toBe(false);
@@ -5181,7 +5181,7 @@ export interface KillDecision {
 }
 
 export function decideKillSwitch(
-  stats: Pick<BucketStats, "trade_count" | "win_count" | "win_rate" | "total_pnl_net">,
+  stats: Pick<BucketStats, "trade_count" | "win_count" | "win_rate" | "total_pnl_net_usdc">,
   cfg: TraderConfig
 ): KillDecision {
   if (stats.trade_count < cfg.killSwitchMinTrades) {
@@ -5222,8 +5222,8 @@ describe("generateReport", () => {
       period: "weekly",
       nowMs: new Date("2026-04-13T00:00:00Z").getTime(),
       buckets7d: [
-        { price_bucket: 0.30, trade_count: 5, win_count: 4, win_rate: 0.8, total_pnl_net: 25 },
-        { price_bucket: 0.50, trade_count: 12, win_count: 6, win_rate: 0.5, total_pnl_net: -5 },
+        { price_bucket: 0.30, trade_count: 5, win_count: 4, win_rate: 0.8, total_pnl_net_usdc: 25 },
+        { price_bucket: 0.50, trade_count: 12, win_count: 6, win_rate: 0.5, total_pnl_net_usdc: -5 },
       ],
       killSwitches: [],
       totalPnl7d: 20,
@@ -5289,7 +5289,7 @@ export function generateReport(input: ReportInput): string {
   lines.push(`|--------|--------|------|----------|---------|`);
   for (const b of input.buckets7d) {
     lines.push(
-      `| ${b.price_bucket.toFixed(2)} | ${b.trade_count} | ${b.win_count} | ${(b.win_rate * 100).toFixed(1)}% | $${b.total_pnl_net.toFixed(2)} |`
+      `| ${b.price_bucket.toFixed(2)} | ${b.trade_count} | ${b.win_count} | ${(b.win_rate * 100).toFixed(1)}% | $${b.total_pnl_net_usdc.toFixed(2)} |`
     );
   }
   lines.push(``);
@@ -5354,7 +5354,7 @@ export async function runReviewer(deps: ReviewerDeps): Promise<ReviewerRunResult
       trade_count: b.trade_count,
       win_count: b.win_count,
       win_rate: b.win_rate,
-      total_pnl_net: b.total_pnl_net,
+      total_pnl_net_usdc: b.total_pnl_net_usdc,
       last_updated: nowMs,
     });
   }
@@ -5365,9 +5365,9 @@ export async function runReviewer(deps: ReviewerDeps): Promise<ReviewerRunResult
       trade_count: acc.trade_count + b.trade_count,
       win_count: acc.win_count + b.win_count,
       win_rate: 0,
-      total_pnl_net: acc.total_pnl_net + b.total_pnl_net,
+      total_pnl_net_usdc: acc.total_pnl_net_usdc + b.total_pnl_net_usdc,
     }),
-    { trade_count: 0, win_count: 0, win_rate: 0, total_pnl_net: 0 }
+    { trade_count: 0, win_count: 0, win_rate: 0, total_pnl_net_usdc: 0 }
   );
   aggregate.win_rate = aggregate.trade_count > 0 ? aggregate.win_count / aggregate.trade_count : 0;
   const killDecision = decideKillSwitch(aggregate, deps.config);
@@ -5377,7 +5377,7 @@ export async function runReviewer(deps: ReviewerDeps): Promise<ReviewerRunResult
     killSwitches.push({ strategy: "smart_money_flow", reason: killDecision.reason ?? "unknown" });
   }
 
-  const totalPnl7d = aggregate.total_pnl_net;
+  const totalPnl7d = aggregate.total_pnl_net_usdc;
   const markdown = generateReport({
     period: "weekly",
     nowMs,

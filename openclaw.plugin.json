@@ -1,0 +1,9 @@
+{
+  "id": "polymarket-trader",
+  "name": "Polymarket Trader",
+  "description": "Event-driven Polymarket trading: collector + paper executor + LLM-driven analyzer and reviewer",
+  "version": "0.1.0",
+  "configSchema": {
+    "dbPath": { "type": "string", "default": "$POLYMARKET_TRADER_HOME/data.db" }
+  }
+}

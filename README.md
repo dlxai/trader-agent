@@ -8,7 +8,39 @@ A standalone, event-driven Polymarket trading plugin built as an OpenClaw extens
 - **Two OpenClaw agents** ("员工") configured separately by the user:
   - `polymarket-analyzer` — judges signal truth on every trigger event.
   - `polymarket-reviewer` — runs daily via OpenClaw cron, reads the trade journal, computes per-bucket win rates, generates filter proposals and kill-switch decisions.
-- **State** lives in an independent SQLite file at `~/.polymarket-trader/data.db`. Reports go to `~/.polymarket-trader/reports/`.
+- **State** lives in `~/.polymarket-trader/data.db`. Reports go to `~/.polymarket-trader/reports/`.
+
+## Isolation from existing OpenClaw / RivonClaw installations
+
+This project runs OpenClaw with a **dedicated `OPENCLAW_HOME`** so it never touches `~/.openclaw/` or any other OpenClaw instance you may have on the same machine. All cron jobs, agent workspaces, sessions, and config live under `~/.polymarket-trader/openclaw/`.
+
+```
+~/.polymarket-trader/
+├── openclaw/                  # OPENCLAW_HOME — fully isolated OpenClaw config
+│   ├── openclaw.json
+│   ├── agents/
+│   │   ├── polymarket-analyzer/
+│   │   └── polymarket-reviewer/
+│   └── cron/jobs.json
+├── data.db                    # plugin SQLite (sibling to openclaw/)
+└── reports/                   # Reviewer markdown output
+```
+
+**Start the project's OpenClaw instance:**
+
+```bash
+# macOS / Linux
+export OPENCLAW_HOME="$HOME/.polymarket-trader/openclaw"
+openclaw start
+
+# Windows PowerShell
+$env:OPENCLAW_HOME = "$env:USERPROFILE\.polymarket-trader\openclaw"
+openclaw start
+```
+
+You can keep your existing RivonClaw or other OpenClaw setup running concurrently — they use the default `~/.openclaw/` and never see this project's state.
+
+**Optional override:** Set `POLYMARKET_TRADER_HOME` to put `data.db` and `reports/` somewhere other than `~/.polymarket-trader/`.
 
 ## Independence
 

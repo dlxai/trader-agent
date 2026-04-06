@@ -3,13 +3,27 @@
 **日期**：2026-04-06
 **状态**：v3 精简版（集成 RivonClaw，YAGNI 严格删减），待审阅
 **核心目标**：**稳定持续盈利**（capital preservation 优先）
-**集成方式**：独立的 OpenClaw 插件项目，编译后可加载进 RivonClaw（或任何 OpenClaw 兼容运行时） + 两个 OpenClaw agent
+**集成方式**：独立的 OpenClaw 插件项目，**用专属 `OPENCLAW_HOME` 运行 OpenClaw 实例**，与系统上任何其他 OpenClaw 实例（如 RivonClaw 桌面版的 `~/.openclaw/`）完全隔离 + 两个 OpenClaw agent
+
 **代码位置**：
-- 项目根：`D:/work/polymarket-trader/`（**完全独立的 git 仓库，零依赖于 dlxiaclaw**）
+- 项目根：`D:/work/polymarket-trader/`（**完全独立的 git 仓库**）
 - 插件入口：`D:/work/polymarket-trader/src/index.ts`
-- Agent workspace：`~/.openclaw/agents/polymarket-analyzer/` 和 `~/.openclaw/agents/polymarket-reviewer/`
-- 数据库：`~/.polymarket-trader/data.db`
-- 报告：`~/.polymarket-trader/reports/`
+
+**运行时数据布局**（全部在 `~/.polymarket-trader/` 下，与 `~/.openclaw/` 完全隔离）：
+
+```
+~/.polymarket-trader/
+├── openclaw/                      ← OPENCLAW_HOME 指向这里
+│   ├── openclaw.json              ← 本项目专用 OpenClaw 配置
+│   ├── agents/
+│   │   ├── polymarket-analyzer/   ← Analyzer 员工 workspace
+│   │   └── polymarket-reviewer/   ← Reviewer 员工 workspace
+│   └── cron/jobs.json             ← 本项目专用 cron 任务
+├── data.db                        ← 插件 SQLite 状态（在 openclaw/ 之外）
+└── reports/                       ← Reviewer 产出的 markdown 报告
+```
+
+**启动方式**：`OPENCLAW_HOME=~/.polymarket-trader/openclaw openclaw start`
 **参考项目**：[west-garden/polymarket-agent](https://github.com/west-garden/polymarket-agent)（旧系统，只借鉴思路不复制代码）
 
 ---

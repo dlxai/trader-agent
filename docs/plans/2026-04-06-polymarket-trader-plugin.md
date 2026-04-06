@@ -4,11 +4,68 @@
 
 **Goal:** Build a Polymarket event-driven trading system as a RivonClaw plugin + 2 OpenClaw agents (Analyzer, Reviewer), targeting stable continuous profitability.
 
-**Architecture:** TypeScript RivonClaw plugin houses Collector (Polymarket WebSocket + rolling stats + trigger detection) and Executor (Kelly sizing + 4-route exit monitor + circuit breakers). Two OpenClaw agents plug into the plugin via RPC: Analyzer (LLM judges signal truth per trigger) and Reviewer (daily cron, reads signal_log, generates filter_proposals and kill_switch decisions). Shared state in `~/.polymarket-trader/data.db` (independent SQLite). Reuses RivonClaw gateway's LLM providers, secrets store, and channel senders.
+**Architecture:** TypeScript RivonClaw plugin houses Collector (Polymarket WebSocket + rolling stats + trigger detection) and Executor (Kelly sizing + 4-route exit monitor + circuit breakers). Two OpenClaw agents plug into the plugin via RPC: Analyzer (LLM judges signal truth per trigger) and Reviewer (daily cron, reads signal_log, generates filter_proposals and kill_switch decisions). Shared state in `$POLYMARKET_TRADER_HOME/data.db` (independent SQLite). Reuses RivonClaw gateway's LLM providers, secrets store, and channel senders.
 
 **Tech Stack:** TypeScript, Node.js 24+, `better-sqlite3`, `ws`, `@polymarket/clob-client`, `vitest`, `tsdown`, `pnpm`. **Zero runtime deps on RivonClaw or OpenClaw packages** — the OpenClaw plugin API surface is inlined as `src/plugin-sdk.ts` (~30 lines of types and one `definePlugin()` helper). The compiled `dist/polymarket-trader.mjs` is a fully self-contained ESM module that the user manually adds to their RivonClaw `openclaw.json` plugins entries.
 
-**Spec reference:** `docs/superpowers/specs/2026-04-06-polymarket-trading-agents-design.md`
+**Spec reference:** `docs/specs/2026-04-06-polymarket-trading-agents-design.md`
+
+---
+
+## Isolation Setup (read this before Task 1)
+
+To prevent any conflict with the user's existing OpenClaw / RivonClaw installation at `~/.openclaw/`, the polymarket-trader project runs OpenClaw with a **dedicated `OPENCLAW_HOME` directory**. All cron jobs, agent workspaces, sessions, and openclaw.json belong to a separate folder under the user's home.
+
+### Directory layout (created at first run; user can override via env vars)
+
+```
+~/.polymarket-trader/                # POLYMARKET_TRADER_HOME (configurable via env)
+├── openclaw/                        # OPENCLAW_HOME for the project's OpenClaw instance
+│   ├── openclaw.json
+│   ├── agents/
+│   │   ├── polymarket-analyzer/
+│   │   │   └── agent/AGENTS.md
+│   │   └── polymarket-reviewer/
+│   │       └── agent/AGENTS.md
+│   └── cron/jobs.json
+├── data.db                          # plugin SQLite (sibling to openclaw/, survives openclaw resets)
+└── reports/                         # Reviewer markdown output
+```
+
+### Environment variables
+
+- **`OPENCLAW_HOME`** (consumed by OpenClaw itself, see `vendor/openclaw/src/utils.ts:315` for the resolution code) — **must be set** to `~/.polymarket-trader/openclaw` before running OpenClaw with this plugin loaded
+- **`POLYMARKET_TRADER_HOME`** (consumed by this plugin) — defaults to `~/.polymarket-trader` if unset; the plugin resolves `data.db` and `reports/` under this path
+
+### Running OpenClaw with the project's isolated config
+
+```bash
+# macOS/Linux
+export OPENCLAW_HOME="$HOME/.polymarket-trader/openclaw"
+openclaw start
+
+# Windows PowerShell
+$env:OPENCLAW_HOME = "$env:USERPROFILE\.polymarket-trader\openclaw"
+openclaw start
+```
+
+The user's existing `~/.openclaw/` directory (if any) is **never touched**. They can run a separate OpenClaw instance with the default home concurrently (e.g. RivonClaw desktop) without any conflict.
+
+### Plugin entry resolution code
+
+`src/index.ts` resolves `data.db` and `reports/` relative to `POLYMARKET_TRADER_HOME` like this:
+
+```typescript
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const POLYMARKET_TRADER_HOME =
+  process.env.POLYMARKET_TRADER_HOME?.trim() || join(homedir(), ".polymarket-trader");
+const DEFAULT_DB_PATH = join(POLYMARKET_TRADER_HOME, "data.db");
+const REPORTS_DIR = join(POLYMARKET_TRADER_HOME, "reports");
+```
+
+This resolution happens in Task 28 (plugin wiring) — the snippet above is the canonical code to use there.
 
 ---
 
@@ -331,7 +388,7 @@ export default defineConfig({
   "description": "Event-driven Polymarket trading: collector + paper executor + LLM-driven analyzer and reviewer",
   "version": "0.1.0",
   "configSchema": {
-    "dbPath": { "type": "string", "default": "~/.polymarket-trader/data.db" },
+    "dbPath": { "type": "string", "default": "$POLYMARKET_TRADER_HOME/data.db" },
     "configPath": { "type": "string", "default": "~/.rivonclaw/polymarket-trader.yaml" }
   }
 }
@@ -608,7 +665,7 @@ git commit -m "feat: inline OpenClaw plugin SDK helper (zero external deps)"
 
 ## Phase 1 — Database Foundation
 
-Goal: typed repositories over an initialized SQLite database at `~/.polymarket-trader/data.db`, with test coverage.
+Goal: typed repositories over an initialized SQLite database at `$POLYMARKET_TRADER_HOME/data.db`, with test coverage.
 
 ### Task 2: Schema SQL and migration runner
 
@@ -4760,7 +4817,11 @@ import { packContext } from "./analyzer/context-packer.js";
 import { createPolymarketWsClient } from "./collector/ws-client.js";
 import { performStartupRecovery } from "./recovery/startup-recovery.js";
 
-const DEFAULT_DB_PATH = join(homedir(), ".rivonclaw", "polymarket.db");
+// POLYMARKET_TRADER_HOME isolation: see "Isolation Setup" section at top of plan.
+const POLYMARKET_TRADER_HOME =
+  process.env.POLYMARKET_TRADER_HOME?.trim() || join(homedir(), ".polymarket-trader");
+const DEFAULT_DB_PATH = join(POLYMARKET_TRADER_HOME, "data.db");
+const REPORTS_DIR = join(POLYMARKET_TRADER_HOME, "reports");
 
 // Module-level state survives double activation (see event-bridge plugin pattern)
 let started = false;
@@ -5285,7 +5346,10 @@ export async function runReviewer(deps: ReviewerDeps): Promise<ReviewerRunResult
     totalPnl7d,
   });
 
-  const reportsDir = join(homedir(), ".rivonclaw", "polymarket-reports");
+  const reportsDir =
+    process.env.POLYMARKET_TRADER_HOME?.trim()
+      ? join(process.env.POLYMARKET_TRADER_HOME, "reports")
+      : join(homedir(), ".polymarket-trader", "reports");
   mkdirSync(reportsDir, { recursive: true });
   const reportPath = join(reportsDir, `review-${new Date(nowMs).toISOString().slice(0, 10)}.md`);
   writeFileSync(reportPath, markdown, "utf-8");
@@ -5361,7 +5425,7 @@ Automatically every day at 00:00 UTC via OpenClaw cron. You can also be invoked 
 When invoked, you should:
 
 1. Call the `polymarket.runReviewer` gateway method via tool.
-2. Read the generated report file at `~/.polymarket-trader/reports/review-YYYY-MM-DD.md`.
+2. Read the generated report file at `$POLYMARKET_TRADER_HOME/reports/review-YYYY-MM-DD.md`.
 3. If the system auto-killed any strategies, raise a clear alert.
 4. Look at per-bucket win rates — identify 1-2 buckets that are notably better or worse than others.
 5. If a bucket has ≥ 5 trades and win rate significantly different from the prior (0.50 or 0.34 for dead zone), suggest a filter_proposal to adjust the prior.
@@ -5638,7 +5702,7 @@ This phase is **not code** — it's observation with defined exit criteria.
 
 ## Observation metrics (track daily)
 
-Run this SQL against `~/.polymarket-trader/data.db`:
+Run this SQL against `$POLYMARKET_TRADER_HOME/data.db`:
 
 ```sql
 -- Daily summary

@@ -6,3 +6,13 @@ coverage/
 .env
 .env.local
 *.tsbuildinfo
+
+# Per-package build outputs
+packages/*/dist/
+packages/*/.turbo/
+packages/renderer/.vite/
+packages/renderer/dist-electron/
+
+# Electron-builder output
+dist-electron/
+release/

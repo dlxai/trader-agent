@@ -1,0 +1,23 @@
+{
+  "name": "@pmt/main",
+  "version": "0.2.0",
+  "description": "Electron main process for Polymarket Trader Desktop",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@pmt/engine": "workspace:*",
+    "@pmt/llm": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "tsdown": "^0.20.3",
+    "vitest": "^4.1.2"
+  }
+}

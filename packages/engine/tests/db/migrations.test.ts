@@ -26,7 +26,7 @@ describe("runMigrations", () => {
 
   it("records current schema version after migration", () => {
     runMigrations(db);
-    expect(currentSchemaVersion(db)).toBe(1);
+    expect(currentSchemaVersion(db)).toBe(2);
   });
 
   it("is idempotent — second run does nothing", () => {

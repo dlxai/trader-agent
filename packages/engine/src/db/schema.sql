@@ -89,3 +89,50 @@ CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY,
   applied_at INTEGER NOT NULL
 );
+
+-- chat_messages: user/agent conversation history (M1.7 added by desktop app spec)
+CREATE TABLE IF NOT EXISTS chat_messages (
+  message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL CHECK (agent_id IN ('analyzer', 'reviewer', 'risk_manager')),
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+  content TEXT NOT NULL,
+  model_used TEXT,
+  provider_used TEXT,
+  tokens_input INTEGER,
+  tokens_output INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_agent ON chat_messages(agent_id, created_at DESC);
+
+-- coordinator_log: hourly Coordinator briefs from Risk Manager
+CREATE TABLE IF NOT EXISTS coordinator_log (
+  log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  generated_at INTEGER NOT NULL,
+  summary TEXT NOT NULL,
+  alerts TEXT NOT NULL DEFAULT '[]',
+  suggestions TEXT NOT NULL DEFAULT '[]',
+  context_snapshot TEXT NOT NULL,
+  model_used TEXT,
+  tokens_total INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_coordinator_log_time ON coordinator_log(generated_at DESC);
+
+-- llm_provider_state: per-provider connection state and quota
+CREATE TABLE IF NOT EXISTS llm_provider_state (
+  provider_id TEXT PRIMARY KEY,
+  is_connected INTEGER NOT NULL DEFAULT 0,
+  auth_type TEXT NOT NULL CHECK (auth_type IN ('api_key', 'oauth', 'cli_credential', 'aws')),
+  models_available TEXT NOT NULL DEFAULT '[]',
+  quota_used INTEGER DEFAULT 0,
+  quota_limit INTEGER,
+  quota_resets_at INTEGER,
+  last_check_at INTEGER NOT NULL,
+  last_error TEXT
+);
+
+-- app_state: desktop app KV (window position, last selected page, etc.)
+CREATE TABLE IF NOT EXISTS app_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);

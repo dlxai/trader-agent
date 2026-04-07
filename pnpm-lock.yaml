@@ -11,6 +11,9 @@ importers:
       '@types/node':
         specifier: ^22.10.5
         version: 22.19.17
+      electron:
+        specifier: ^30.0.0
+        version: 30.5.1
       electron-builder:
         specifier: ^25.1.8
         version: 25.1.8(electron-builder-squirrel-windows@25.1.8)

@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { openDatabase } from "./db/connection.js";
 import { createSignalLogRepo } from "./db/signal-log-repo.js";
 import { createPortfolioStateRepo } from "./db/portfolio-state-repo.js";
+import { runReviewer } from "./reviewer/reviewer.js";
+import { createStrategyPerformanceRepo } from "./db/strategy-performance-repo.js";
 import { loadConfig } from "./config/loader.js";
 import { createEventBus } from "./bus/events.js";
 import { createCollector } from "./collector/collector.js";
@@ -147,6 +149,26 @@ export default definePlugin({
     collector.start().catch((err) => {
       logger.error(`[polymarket] collector failed to start: ${String(err)}`);
     });
+
+    if (typeof api.registerGatewayMethod === "function") {
+      api.registerGatewayMethod("polymarket.runReviewer", async ({ respond }) => {
+        try {
+          const result = await runReviewer({
+            db,
+            config,
+            signalRepo,
+            strategyPerfRepo: createStrategyPerformanceRepo(db),
+            logger,
+          });
+          respond(true, result);
+        } catch (err) {
+          respond(false, undefined, {
+            code: "REVIEWER_FAILED",
+            message: String(err),
+          });
+        }
+      });
+    }
 
     cleanup = () => {
       try {

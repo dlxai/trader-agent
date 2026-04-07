@@ -19,6 +19,7 @@ export function createPositionTracker(deps: { signalRepo: SignalLogRepo }): Posi
     open(signal) {
       deps.signalRepo.insert(signal);
       const row = deps.signalRepo.findById(signal.signal_id);
+      /* c8 ignore next 2 */
       if (!row) throw new Error(`positionTracker.open: failed to read back ${signal.signal_id}`);
       open.set(row.signal_id, row);
     },

@@ -72,4 +72,29 @@ describe("positionTracker", () => {
     expect(tracker2.listOpen()).toHaveLength(1);
     expect(tracker2.totalExposure()).toBe(150);
   });
+
+  it("findByMarket returns the open position for the given market", () => {
+    tracker.open(sampleNew("find-me", 200));
+    const found = tracker.findByMarket("m1");
+    expect(found).toBeDefined();
+    expect(found?.signal_id).toBe("find-me");
+  });
+
+  it("findByMarket returns undefined when no position is open for market", () => {
+    const found = tracker.findByMarket("unknown-market");
+    expect(found).toBeUndefined();
+  });
+
+  it("findByMarket skips positions on other markets (false branch of market_id check)", () => {
+    // Open two positions on different markets so findByMarket must iterate past one
+    const sig1 = sampleNew("sig-alpha", 100);
+    sig1.market_id = "market-alpha";
+    const sig2 = { ...sampleNew("sig-beta", 100), market_id: "market-beta" };
+    tracker.open(sig1);
+    tracker.open(sig2);
+    const found = tracker.findByMarket("market-beta");
+    expect(found?.signal_id).toBe("sig-beta");
+    const notFound = tracker.findByMarket("market-gamma");
+    expect(notFound).toBeUndefined();
+  });
 });

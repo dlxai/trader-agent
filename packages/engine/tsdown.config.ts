@@ -2,23 +2,26 @@ import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: {
-    "polymarket-trader": "src/index.ts",
+    index: "src/index.ts",
+    "collector/index": "src/collector/index.ts",
+    "executor/index": "src/executor/index.ts",
+    "db/index": "src/db/index.ts",
+    "bus/index": "src/bus/index.ts",
+    "config/index": "src/config/index.ts",
+    "reviewer/index": "src/reviewer/index.ts",
+    "recovery/index": "src/recovery/index.ts",
+    "analyzer/index": "src/analyzer/index.ts",
+    "util/index": "src/util/index.ts",
   },
   format: ["esm"],
   dts: true,
   clean: true,
   sourcemap: false,
-  // Force .d.ts extension (tsdown defaults to .d.mts for esm; package.json expects .d.ts)
-  outExtensions: () => ({ dts: ".d.ts" }),
-  // Only external runtime deps — everything else (including plugin-sdk inline) is bundled
   external: ["better-sqlite3", "ws"],
+  outExtensions: () => ({ js: ".js", dts: ".d.ts" }),
   onSuccess: async () => {
     const { copyFileSync, mkdirSync } = await import("node:fs");
     const { join } = await import("node:path");
-    copyFileSync(
-      join(process.cwd(), "openclaw.plugin.json"),
-      join(process.cwd(), "dist", "openclaw.plugin.json")
-    );
     mkdirSync(join(process.cwd(), "dist", "db"), { recursive: true });
     copyFileSync(
       join(process.cwd(), "src", "db", "schema.sql"),

@@ -7,5 +7,5 @@ export default defineConfig({
   clean: true,
   sourcemap: false,
   external: ["@pmt/engine", "@anthropic-ai/sdk", "openai", "@google/generative-ai"],
-  outExtensions: () => ({ dts: ".d.ts" }),
+  outExtensions: () => ({ js: ".js", dts: ".d.ts" }),
 });

@@ -74,18 +74,25 @@ function resolveDataDir(): string {
 /**
  * Placeholder market-metadata provider used at boot time.
  *
- * The real provider will hit Polymarket's REST API to fetch title/expiry/
- * liquidity for a given market. Until that's wired (later M3 task), the
- * collector will simply not produce triggers — `start()` will succeed but
- * any incoming trade that needs metadata will reject the promise. That's
- * acceptable for M3.1 which only validates boot/shutdown semantics.
+ * Returns a deterministic stub for any market_id so the collector can run end
+ * to end without crashing on first trade. The stub uses the market_id as the
+ * title, sets a 24h expiry, and a $10k liquidity hint — enough for the
+ * trigger evaluator and analyzer prompts to format something coherent during
+ * paper trading. M5 wires the real Polymarket Gamma REST client and replaces
+ * this provider.
+ *
+ * IMPORTANT: never throw here — the collector calls this on every trade for
+ * an unseen market, and a throwing provider takes the entire pipeline down.
  */
 async function placeholderMarketMetadataProvider(
   marketId: string
 ): Promise<MarketMetadata> {
-  throw new Error(
-    `marketMetadataProvider not yet configured (requested ${marketId})`
-  );
+  return {
+    marketId,
+    marketTitle: marketId,
+    resolvesAt: Date.now() + 86_400_000,
+    liquidity: 10_000,
+  };
 }
 
 /**

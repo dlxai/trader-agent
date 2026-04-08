@@ -4,3 +4,4 @@ export * from "./trigger-evaluator.js";
 export * from "./market-state.js";
 export * from "./ws-client.js";
 export * from "./collector.js";
+export * from "./polymarket-api.js";

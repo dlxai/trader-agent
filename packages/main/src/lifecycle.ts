@@ -21,6 +21,7 @@ import {
   createPortfolioStateRepo,
   loadConfig,
   createPolymarketWsClient,
+  createPolymarketMarketMetadataProvider,
   type EventBus,
   type Collector,
   type Executor,
@@ -72,27 +73,11 @@ function resolveDataDir(): string {
 }
 
 /**
- * Placeholder market-metadata provider used at boot time.
- *
- * Returns a deterministic stub for any market_id so the collector can run end
- * to end without crashing on first trade. The stub uses the market_id as the
- * title, sets a 24h expiry, and a $10k liquidity hint — enough for the
- * trigger evaluator and analyzer prompts to format something coherent during
- * paper trading. M5 wires the real Polymarket Gamma REST client and replaces
- * this provider.
- *
- * IMPORTANT: never throw here — the collector calls this on every trade for
- * an unseen market, and a throwing provider takes the entire pipeline down.
+ * Create a real market-metadata provider using Polymarket Gamma API.
+ * Falls back to placeholder if API call fails.
  */
-async function placeholderMarketMetadataProvider(
-  marketId: string
-): Promise<MarketMetadata> {
-  return {
-    marketId,
-    marketTitle: marketId,
-    resolvesAt: Date.now() + 86_400_000,
-    liquidity: 10_000,
-  };
+function createRealMarketMetadataProvider(proxyUrl?: string) {
+  return createPolymarketMarketMetadataProvider({ proxyUrl });
 }
 
 /**
@@ -142,7 +127,7 @@ export async function bootEngine(): Promise<EngineContext> {
         onError: (err) => noopLogger.error(`[ws] ${err.message}`),
         proxyUrl,
       }),
-    marketMetadataProvider: placeholderMarketMetadataProvider,
+    marketMetadataProvider: createRealMarketMetadataProvider(proxyUrl),
     logger: noopLogger,
   });
 

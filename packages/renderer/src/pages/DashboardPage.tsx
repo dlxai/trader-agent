@@ -7,6 +7,7 @@ import { CoordinatorBanner } from "../components/CoordinatorBanner.js";
 import { usePortfolio } from "../stores/portfolio.js";
 import { usePositions } from "../stores/positions.js";
 import { useCoordinator } from "../stores/coordinator.js";
+import { useSettings } from "../stores/settings.js";
 
 const layoutStyle: React.CSSProperties = {
   display: "flex",
@@ -62,8 +63,7 @@ export function DashboardPage() {
   const portfolio = usePortfolio();
   const positions = usePositions((s) => s.positions);
   const coordinator = useCoordinator();
-  // M5.14 will wire this to the settings store.
-  const pendingProposalCount = 0;
+  const pendingProposalCount = useSettings((s) => s.pendingProposals.length);
 
   useEffect(() => {
     void usePortfolio.getState().refresh();

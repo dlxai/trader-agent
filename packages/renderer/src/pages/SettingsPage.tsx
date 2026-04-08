@@ -1,122 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect } from "react";
 import { theme } from "../theme.js";
 import { Sidebar } from "../components/Sidebar.js";
 import { ProviderCard } from "../components/ProviderCard.js";
 import { ProposalCard } from "../components/ProposalCard.js";
-
-// M4.7-M4.11 — mock data only. M5 wires real IPC / stores.
-
-interface ProviderInfo {
-  id: string;
-  name: string;
-  authType: "api_key" | "oauth" | "cli_credential" | "aws";
-  isConnected: boolean;
-  authDetail?: string;
-  models?: string[];
-}
-
-interface AgentAssignment {
-  providerId: string;
-  modelId: string;
-}
-
-interface PendingProposal {
-  id: number;
-  field: string;
-  oldValue: string;
-  proposedValue: string;
-  rationale: string;
-  sampleCount: number;
-  expectedDeltaWinrate: number;
-}
-
-const MOCK_PROVIDERS: ProviderInfo[] = [
-  {
-    id: "anthropic_api",
-    name: "Anthropic",
-    authType: "api_key",
-    isConnected: true,
-    authDetail: "sk-ant-...4f2a",
-    models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
-  },
-  { id: "deepseek", name: "DeepSeek", authType: "api_key", isConnected: false },
-  { id: "zhipu", name: "Zhipu / Z.ai", authType: "api_key", isConnected: false },
-  { id: "openai", name: "OpenAI", authType: "api_key", isConnected: false },
-  {
-    id: "anthropic_subscription",
-    name: "Claude (Sub)",
-    authType: "cli_credential",
-    isConnected: true,
-    authDetail: "Auto \u00B7 Max plan \u00B7 4d left",
-  },
-  {
-    id: "gemini_oauth",
-    name: "Gemini (OAuth)",
-    authType: "oauth",
-    isConnected: true,
-    authDetail: "Free tier \u00B7 1000/day",
-  },
-];
-
-const MOCK_AGENT_MODELS: Record<
-  "analyzer" | "reviewer" | "risk_manager",
-  AgentAssignment
-> = {
-  analyzer: {
-    providerId: "anthropic_subscription",
-    modelId: "claude-opus-4-6",
-  },
-  reviewer: {
-    providerId: "anthropic_subscription",
-    modelId: "claude-sonnet-4-6",
-  },
-  risk_manager: {
-    providerId: "gemini_oauth",
-    modelId: "gemini-2.5-flash",
-  },
-};
-
-const MOCK_THRESHOLDS = {
-  minTradeUsdc: 200,
-  minNetFlow1m: 3500,
-  minUniqueTraders1m: 3,
-  minPriceMove5m: 0.03,
-  minLiquidity: 5000,
-  deadZoneMin: 0.6,
-  deadZoneMax: 0.85,
-} as const;
-
-const MOCK_RISK_LIMITS = {
-  totalCapital: 10000,
-  maxPositionUsdc: 300,
-  maxSingleLoss: 50,
-  maxOpenPositions: 8,
-  dailyHaltPct: 0.02,
-  takeProfitPct: 0.1,
-  stopLossPct: 0.07,
-} as const;
-
-const MOCK_PROPOSALS: PendingProposal[] = [
-  {
-    id: 1,
-    field: "min_unique_traders_1m",
-    oldValue: "3",
-    proposedValue: "4",
-    rationale:
-      "Bucket 0.40-0.60 win rate is 58% over 22 trades; tightening filter projected to lift to ~64%.",
-    sampleCount: 22,
-    expectedDeltaWinrate: 0.06,
-  },
-  {
-    id: 2,
-    field: "take_profit_pct",
-    oldValue: "0.10",
-    proposedValue: "0.08",
-    rationale: "Past 30 trades show 70% of TP exits happen below +9%.",
-    sampleCount: 30,
-    expectedDeltaWinrate: 0.04,
-  },
-];
+import { useSettings } from "../stores/settings.js";
+import { pmt, isElectron } from "../ipc-client.js";
 
 const layoutStyle: React.CSSProperties = {
   display: "flex",
@@ -166,17 +54,40 @@ const AGENT_LABELS: Record<"analyzer" | "reviewer" | "risk_manager", string> = {
 };
 
 export function SettingsPage() {
-  const [proposals, setProposals] = useState<PendingProposal[]>(MOCK_PROPOSALS);
+  const providers = useSettings((s) => s.providers);
+  const agentModels = useSettings((s) => s.agentModels);
+  const thresholds = useSettings((s) => s.thresholds);
+  const riskLimits = useSettings((s) => s.riskLimits);
+  const proposals = useSettings((s) => s.pendingProposals);
 
-  const handleApprove = (id: number) => {
-    setProposals((prev) => prev.filter((p) => p.id !== id));
-  };
-  const handleReject = (id: number) => {
-    setProposals((prev) => prev.filter((p) => p.id !== id));
+  useEffect(() => {
+    void useSettings.getState().refresh();
+  }, []);
+
+  const handleApprove = async (id: number) => {
+    useSettings.getState().removeProposalLocally(id);
+    if (isElectron()) {
+      try {
+        await pmt.approveProposal(id);
+      } finally {
+        void useSettings.getState().refresh();
+      }
+    }
   };
 
-  const apiKeyProviders = MOCK_PROVIDERS.filter((p) => p.authType === "api_key");
-  const subscriptionProviders = MOCK_PROVIDERS.filter(
+  const handleReject = async (id: number) => {
+    useSettings.getState().removeProposalLocally(id);
+    if (isElectron()) {
+      try {
+        await pmt.rejectProposal(id);
+      } finally {
+        void useSettings.getState().refresh();
+      }
+    }
+  };
+
+  const apiKeyProviders = providers.filter((p) => p.authType === "api_key");
+  const subscriptionProviders = providers.filter(
     (p) => p.authType === "oauth" || p.authType === "cli_credential",
   );
 
@@ -186,51 +97,43 @@ export function SettingsPage() {
     locked: boolean;
     autoApplied?: boolean;
   }> = [
-    {
-      label: "Min trade size",
-      value: `$${MOCK_THRESHOLDS.minTradeUsdc}`,
-      locked: false,
-    },
+    { label: "Min trade size", value: `$${thresholds.minTradeUsdc}`, locked: false },
     {
       label: "Min net flow (1m)",
-      value: `$${MOCK_THRESHOLDS.minNetFlow1m}`,
+      value: `$${thresholds.minNetFlow1m}`,
       locked: false,
       autoApplied: true,
     },
     {
       label: "Min unique traders (1m)",
-      value: `${MOCK_THRESHOLDS.minUniqueTraders1m}`,
+      value: `${thresholds.minUniqueTraders1m}`,
       locked: false,
     },
     {
       label: "Min price move (5m)",
-      value: `${(MOCK_THRESHOLDS.minPriceMove5m * 100).toFixed(1)}%`,
+      value: `${(thresholds.minPriceMove5m * 100).toFixed(1)}%`,
       locked: false,
     },
-    {
-      label: "Min liquidity",
-      value: `$${MOCK_THRESHOLDS.minLiquidity}`,
-      locked: false,
-    },
+    { label: "Min liquidity", value: `$${thresholds.minLiquidity}`, locked: false },
     {
       label: "Dead zone",
-      value: `[${MOCK_THRESHOLDS.deadZoneMin}, ${MOCK_THRESHOLDS.deadZoneMax}]`,
+      value: `[${thresholds.deadZoneMin}, ${thresholds.deadZoneMax}]`,
       locked: true,
     },
   ];
 
   const riskRows: Array<[string, string]> = [
-    ["Total capital", `$${MOCK_RISK_LIMITS.totalCapital.toLocaleString()}`],
-    ["Max position size", `$${MOCK_RISK_LIMITS.maxPositionUsdc}`],
-    ["Max single-trade loss", `$${MOCK_RISK_LIMITS.maxSingleLoss}`],
-    ["Max open positions", `${MOCK_RISK_LIMITS.maxOpenPositions}`],
+    ["Total capital", `$${riskLimits.totalCapital.toLocaleString()}`],
+    ["Max position size", `$${riskLimits.maxPositionUsdc}`],
+    ["Max single-trade loss", `$${riskLimits.maxSingleLoss}`],
+    ["Max open positions", `${riskLimits.maxOpenPositions}`],
     [
       "Daily halt threshold",
-      `${(MOCK_RISK_LIMITS.dailyHaltPct * 100).toFixed(1)}%`,
+      `${(riskLimits.dailyHaltPct * 100).toFixed(1)}%`,
     ],
     [
       "Take profit / Stop loss",
-      `+${(MOCK_RISK_LIMITS.takeProfitPct * 100).toFixed(0)}% / -${(MOCK_RISK_LIMITS.stopLossPct * 100).toFixed(0)}%`,
+      `+${(riskLimits.takeProfitPct * 100).toFixed(0)}% / -${(riskLimits.stopLossPct * 100).toFixed(0)}%`,
     ],
   ];
 
@@ -337,7 +240,7 @@ export function SettingsPage() {
           >
             {(["analyzer", "reviewer", "risk_manager"] as const).map(
               (agentId) => {
-                const assignment = MOCK_AGENT_MODELS[agentId];
+                const assignment = agentModels[agentId];
                 return (
                   <div key={agentId}>
                     <div
@@ -536,8 +439,12 @@ export function SettingsPage() {
                 oldValue={p.oldValue}
                 proposedValue={p.proposedValue}
                 rationale={p.rationale}
-                onApprove={() => handleApprove(p.id)}
-                onReject={() => handleReject(p.id)}
+                onApprove={() => {
+                  void handleApprove(p.id);
+                }}
+                onReject={() => {
+                  void handleReject(p.id);
+                }}
               />
             ))
           )}

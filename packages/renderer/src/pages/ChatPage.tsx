@@ -7,6 +7,7 @@ import {
 } from "../components/ChatMessage.js";
 import { EmployeeTab } from "../components/EmployeeTab.js";
 import { useChat } from "../stores/chat.js";
+import { useSettings } from "../stores/settings.js";
 
 interface AgentMeta {
   id: AgentId;
@@ -20,9 +21,6 @@ const MOCK_AGENTS: readonly AgentMeta[] = [
   { id: "reviewer", icon: "\u{1F4CA}", name: "Reviewer", model: "claude-sonnet-4-6" },
   { id: "risk_manager", icon: "\u{1F6E1}\uFE0F", name: "Risk Manager", model: "gemini-2.5-flash" },
 ] as const;
-
-// M5.14 will replace this with useSettings((s) => s.pendingProposals.length).
-const MOCK_PENDING_PROPOSAL_COUNT = 2;
 
 type AgentFilter = "all" | AgentId;
 
@@ -146,6 +144,7 @@ export function ChatPage() {
   const [filter, setFilter] = useState<AgentFilter>("all");
   const [draft, setDraft] = useState<string>("");
   const messagesByAgent = useChat((s) => s.messagesByAgent);
+  const pendingProposalCount = useSettings((s) => s.pendingProposals.length);
 
   // Hall coordination model: the chat store keeps per-agent arrays internally,
   // but the Hall view flattens + sorts them by timestamp so all three agents
@@ -190,7 +189,7 @@ export function ChatPage() {
 
   return (
     <div style={layoutStyle}>
-      <Sidebar pendingProposalCount={MOCK_PENDING_PROPOSAL_COUNT} />
+      <Sidebar pendingProposalCount={pendingProposalCount} />
       <div style={contentStyle}>
         <div style={headerStyle}>
           <div style={titleStyle}>Chat {"\u2014"} Hall</div>

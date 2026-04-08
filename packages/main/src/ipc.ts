@@ -133,12 +133,29 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle("approveProposal", async (_e, id: number) => {
     const ctx = deps.getEngineContext();
     if (!ctx) throw new Error("engine not running");
-    // M5.8 will apply the proposal to filter_config and mark approved
-    ctx.db
-      .prepare(
-        "UPDATE filter_proposals SET status = 'approved', reviewed_at = ? WHERE proposal_id = ?"
-      )
-      .run(Date.now(), id);
+    const proposal = ctx.db
+      .prepare("SELECT * FROM filter_proposals WHERE proposal_id = ?")
+      .get(id) as
+      | { field: string; proposed_value: string; status: string }
+      | undefined;
+    if (!proposal) throw new Error(`proposal ${id} not found`);
+    if (proposal.status !== "pending")
+      throw new Error(`proposal ${id} is not pending`);
+
+    // Apply to filter_config in a transaction so the proposal status flip and
+    // the config write land atomically.
+    ctx.db.transaction(() => {
+      ctx.db
+        .prepare(
+          "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
+        )
+        .run(proposal.field, proposal.proposed_value, Date.now(), `proposal:${id}`);
+      ctx.db
+        .prepare(
+          "UPDATE filter_proposals SET status = 'approved', reviewed_at = ? WHERE proposal_id = ?"
+        )
+        .run(Date.now(), id);
+    })();
   });
 
   ipcMain.handle("rejectProposal", async (_e, id: number) => {

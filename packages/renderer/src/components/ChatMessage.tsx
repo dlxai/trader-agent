@@ -9,9 +9,10 @@ export interface ChatMessageProps {
   content: string;
   agentIcon?: string;
   agentName?: string;
+  isStreaming?: boolean;
 }
 
-export function ChatMessage({ role, content, agentIcon, agentName }: ChatMessageProps) {
+export function ChatMessage({ role, content, agentIcon, agentName, isStreaming }: ChatMessageProps) {
   if (role === "user") {
     return (
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
@@ -110,6 +111,19 @@ export function ChatMessage({ role, content, agentIcon, agentName }: ChatMessage
           }}
         >
           {content}
+          {isStreaming && (
+            <span
+              style={{
+                display: "inline-block",
+                width: 8,
+                height: 8,
+                background: theme.colors.purple,
+                borderRadius: "50%",
+                marginLeft: 4,
+                animation: "pulse 1s ease-in-out infinite",
+              }}
+            />
+          )}
         </div>
       </div>
     </div>

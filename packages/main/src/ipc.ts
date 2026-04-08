@@ -342,6 +342,132 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     }
   );
 
+  // M5.9b: Streaming chat IPC - sends token-by-token updates to renderer
+  ipcMain.handle(
+    "sendMessageStream",
+    async (_e, agentId: string, content: string) => {
+      const ctx = deps.getEngineContext();
+      if (!ctx) throw new Error("engine not running");
+      const window = deps.getMainWindow();
+      const wc = window?.webContents();
+
+      // Persist user message
+      ctx.db
+        .prepare(
+          "INSERT INTO chat_messages (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .run(agentId, "user", content, Date.now());
+
+      // Notify renderer that user message was added
+      wc?.send("chat:message", { agentId, role: "user", content });
+
+      if (agentId !== "risk_manager") {
+        // M5: only risk_manager has reactive chat. Analyzer/Reviewer chats
+        // can be added in a follow-up task.
+        const placeholder = `(${agentId} chat not yet wired — coming in a follow-up task)`;
+        ctx.db
+          .prepare(
+            "INSERT INTO chat_messages (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+          )
+          .run(agentId, "assistant", placeholder, Date.now());
+        wc?.send("chat:complete", { agentId, role: "assistant", content: placeholder });
+        return { content: placeholder };
+      }
+
+      const runner = deps.getRiskMgrRunner();
+      if (!runner) throw new Error("risk manager runner not configured");
+
+      // Build current system state snapshot
+      const portfolioRows = ctx.db
+        .prepare("SELECT key, value FROM portfolio_state")
+        .all() as Array<{ key: string; value: string }>;
+      const portfolioState = Object.fromEntries(
+        portfolioRows.map((r) => {
+          try {
+            return [r.key, JSON.parse(r.value)];
+          } catch {
+            return [r.key, r.value];
+          }
+        })
+      ) as Record<string, unknown>;
+      const recentTrades = ctx.db
+        .prepare(
+          "SELECT market_title, direction, pnl_net_usdc, exit_reason FROM signal_log WHERE exit_at IS NOT NULL ORDER BY exit_at DESC LIMIT 5"
+        )
+        .all() as Array<{
+        market_title: string;
+        direction: string;
+        pnl_net_usdc: number | null;
+        exit_reason: string | null;
+      }>;
+      const openCountRow = ctx.db
+        .prepare("SELECT COUNT(*) as n FROM signal_log WHERE exit_at IS NULL")
+        .get() as { n: number } | undefined;
+      const openCount = openCountRow?.n ?? 0;
+
+      // Start streaming - first notify renderer that assistant is starting to respond
+      wc?.send("chat:streaming:start", { agentId });
+
+      let fullContent = "";
+      const assigned = ctx.registry.getProviderForAgent("risk_manager");
+      
+      if (assigned) {
+        try {
+          const stream = assigned.provider.streamChat({
+            model: assigned.modelId,
+            messages: [
+              { role: "system", content: "You are the Polymarket Risk Manager / Coordinator. Answer user questions concisely and cite specific numbers." },
+              { role: "user", content: `System state:\ncurrent_equity: $${Number(portfolioState.current_equity ?? 10000).toFixed(2)}\nday_start_equity: $${Number(portfolioState.day_start_equity ?? 10000).toFixed(2)}\ndaily_halt_triggered: ${portfolioState.daily_halt_triggered ?? false}\nopen_position_count: ${openCount}\n\nQuestion: ${content}` },
+            ],
+            temperature: 0.3,
+            maxTokens: 500,
+          });
+
+          for await (const chunk of stream) {
+            if (chunk.delta) {
+              fullContent += chunk.delta;
+              wc?.send("chat:streaming:delta", { agentId, delta: chunk.delta });
+            }
+            if (chunk.done && chunk.final) {
+              fullContent = chunk.final.content;
+            }
+          }
+        } catch (err) {
+          fullContent = `(Error: ${String(err).slice(0, 100)})`;
+        }
+      } else {
+        // Fallback to non-streaming if provider doesn't support streaming
+        fullContent = await runner.answerQuestion({
+          question: content,
+          systemState: {
+            portfolioState: {
+              current_equity: Number(portfolioState.current_equity ?? 10000),
+              day_start_equity: Number(portfolioState.day_start_equity ?? 10000),
+              daily_halt_triggered: Boolean(
+                portfolioState.daily_halt_triggered ?? false
+              ),
+            },
+            recentTrades,
+            openPositionCount: openCount,
+          },
+        });
+      }
+
+      // Persist assistant message
+      ctx.db
+        .prepare(
+          "INSERT INTO chat_messages (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .run(agentId, "assistant", fullContent, Date.now());
+
+      // Notify renderer that streaming is complete
+      wc?.send("chat:streaming:complete", { agentId, content: fullContent });
+
+      return { content: fullContent };
+    }
+  );
+
+  // Legacy non-streaming handler (kept for backward compatibility)
   ipcMain.handle(
     "sendMessage",
     async (_e, agentId: string, content: string) => {
@@ -453,5 +579,54 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     if (!ctx) return;
     ctx.collector.stop();
     // M5.10 will also force-close all positions
+  });
+
+  // Rollback auto-applied filter config changes
+  ipcMain.handle("rollbackAutoApply", async (_e, historyId: number) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+
+    const historyRow = ctx.db
+      .prepare("SELECT * FROM filter_config_history WHERE history_id = ?")
+      .get(historyId) as
+      | { history_id: number; key: string; old_value: string; new_value: string; proposal_id: number | null; rolled_back_at: number | null }
+      | undefined;
+
+    if (!historyRow) throw new Error(`history entry ${historyId} not found`);
+    if (historyRow.rolled_back_at) throw new Error(`history entry ${historyId} already rolled back`);
+
+    ctx.db.transaction(() => {
+      // Restore old value to filter_config
+      ctx.db
+        .prepare(
+          "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
+        )
+        .run(historyRow.key, historyRow.old_value, Date.now(), `rollback:${historyId}`);
+
+      // Mark history entry as rolled back
+      ctx.db
+        .prepare("UPDATE filter_config_history SET rolled_back_at = ?, rollback_reason = ? WHERE history_id = ?")
+        .run(Date.now(), "user_rollback", historyId);
+
+      // Also revert the proposal status back to pending so it can be re-reviewed
+      if (historyRow.proposal_id) {
+        ctx.db
+          .prepare("UPDATE filter_proposals SET status = 'pending', reviewed_at = NULL WHERE proposal_id = ?")
+          .run(historyRow.proposal_id);
+      }
+    })();
+
+    return { success: true };
+  });
+
+  // Get auto-apply history for rollback UI
+  ipcMain.handle("getAutoApplyHistory", async (_e, limit: number = 50) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return [];
+    return ctx.db
+      .prepare(
+        "SELECT * FROM filter_config_history WHERE source LIKE 'auto-apply:%' ORDER BY changed_at DESC LIMIT ?"
+      )
+      .all(limit);
   });
 }

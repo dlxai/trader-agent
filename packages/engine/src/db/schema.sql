@@ -136,3 +136,18 @@ CREATE TABLE IF NOT EXISTS app_state (
   value TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+-- filter_config_history: audit log for auto-apply rollback (M6.4)
+CREATE TABLE IF NOT EXISTS filter_config_history (
+  history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  changed_at INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  old_value TEXT NOT NULL,
+  new_value TEXT NOT NULL,
+  source TEXT NOT NULL, -- e.g., 'auto-apply:123' or 'user'
+  proposal_id INTEGER,
+  rolled_back_at INTEGER,
+  rollback_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_filter_config_history_key ON filter_config_history(key, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_filter_config_history_source ON filter_config_history(source) WHERE source LIKE 'auto-apply:%';

@@ -7,7 +7,8 @@
   "files": [
     "packages/main/dist/**/*",
     "packages/renderer/dist/**/*",
-    "node_modules/**/*"
+    "node_modules/**/*",
+    "assets/**/*"
   ],
   "extraResources": [
     {
@@ -22,7 +23,8 @@
         "arch": ["x64", "arm64"]
       }
     ],
-    "category": "public.app-category.finance"
+    "category": "public.app-category.finance",
+    "icon": "assets/icon.png"
   },
   "win": {
     "target": [
@@ -30,7 +32,8 @@
         "target": "nsis",
         "arch": ["x64"]
       }
-    ]
+    ],
+    "icon": "assets/icon.png"
   },
   "linux": {
     "target": [
@@ -39,10 +42,13 @@
         "arch": ["x64"]
       }
     ],
-    "category": "Office"
+    "category": "Office",
+    "icon": "assets/icon.png"
   },
   "nsis": {
     "oneClick": false,
-    "allowToChangeInstallationDirectory": true
+    "allowToChangeInstallationDirectory": true,
+    "installerIcon": "assets/icon.png",
+    "uninstallerIcon": "assets/icon.png"
   }
 }

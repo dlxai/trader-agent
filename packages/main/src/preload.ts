@@ -49,6 +49,8 @@ const api = {
     ipcRenderer.invoke("getChatHistory", agentId, limit),
   sendMessage: (agentId: string, content: string) =>
     ipcRenderer.invoke("sendMessage", agentId, content),
+  sendMessageStream: (agentId: string, content: string) =>
+    ipcRenderer.invoke("sendMessageStream", agentId, content),
   clearChatHistory: (agentId: string) =>
     ipcRenderer.invoke("clearChatHistory", agentId),
 
@@ -56,6 +58,10 @@ const api = {
   pauseTrading: () => ipcRenderer.invoke("pauseTrading"),
   resumeTrading: () => ipcRenderer.invoke("resumeTrading"),
   emergencyStop: () => ipcRenderer.invoke("emergencyStop"),
+
+  // Rollback
+  rollbackAutoApply: (historyId: number) => ipcRenderer.invoke("rollbackAutoApply", historyId),
+  getAutoApplyHistory: (limit?: number) => ipcRenderer.invoke("getAutoApplyHistory", limit),
 
   // Event subscriptions (Main -> Renderer push)
   on: (event: string, handler: (...args: unknown[]) => void) => {

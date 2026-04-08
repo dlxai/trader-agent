@@ -1,3 +1,5 @@
+import type Database from "better-sqlite3";
+
 const MIN_SAMPLE_COUNT = 30;
 const MIN_DELTA_WINRATE = 0.05;
 
@@ -25,6 +27,11 @@ export interface AutoApplyInput {
 export interface AutoApplyDecision {
   shouldApply: boolean;
   reason: string;
+}
+
+export interface ProcessProposalsResult {
+  applied: number;
+  skipped: number;
 }
 
 /**
@@ -68,4 +75,64 @@ export function evaluateAutoApply(input: AutoApplyInput): AutoApplyDecision {
     shouldApply: true,
     reason: `${input.sample_count} samples + ${(input.expected_delta_winrate * 100).toFixed(1)}% expected delta — auto-applied`,
   };
+}
+
+/**
+ * Process all pending filter_proposals and auto-apply high-confidence ones.
+ * Called automatically after each Reviewer run.
+ */
+export function processProposals(db: Database.Database): ProcessProposalsResult {
+  const pending = db
+    .prepare(
+      "SELECT proposal_id, field, proposed_value, sample_count, expected_delta_winrate FROM filter_proposals WHERE status = 'pending'"
+    )
+    .all() as Array<{
+    proposal_id: number;
+    field: string;
+    proposed_value: string;
+    sample_count: number;
+    expected_delta_winrate: number | null;
+  }>;
+
+  let applied = 0;
+  let skipped = 0;
+
+  for (const p of pending) {
+    const decision = evaluateAutoApply({
+      sample_count: p.sample_count,
+      expected_delta_winrate: p.expected_delta_winrate,
+      field: p.field,
+      proposed_value: p.proposed_value,
+    });
+
+    if (decision.shouldApply) {
+      db.transaction(() => {
+        // Get old value for audit log
+        const oldConfig = db
+          .prepare("SELECT value FROM filter_config WHERE key = ?")
+          .get(p.field) as { value: string } | undefined;
+        const oldValue = oldConfig?.value ?? "";
+
+        // Apply the change
+        db.prepare(
+          "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
+        ).run(p.field, p.proposed_value, Date.now(), `auto-apply:${p.proposal_id}`);
+
+        // Update proposal status
+        db.prepare(
+          "UPDATE filter_proposals SET status = 'approved', reviewed_at = ? WHERE proposal_id = ?"
+        ).run(Date.now(), p.proposal_id);
+
+        // Write audit log entry
+        db.prepare(
+          "INSERT INTO filter_config_history (changed_at, key, old_value, new_value, source, proposal_id) VALUES (?, ?, ?, ?, ?, ?)"
+        ).run(Date.now(), p.field, oldValue, p.proposed_value, `auto-apply:${p.proposal_id}`, p.proposal_id);
+      })();
+      applied++;
+    } else {
+      skipped++;
+    }
+  }
+
+  return { applied, skipped };
 }

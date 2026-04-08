@@ -1,56 +1,100 @@
 # Polymarket Trader
 
-A standalone, event-driven Polymarket trading plugin built as an OpenClaw extension. Designed for **stable continuous profitability** on Polymarket prediction markets via WebSocket-driven signal detection, LLM-based judgment, and Kelly-sized paper trading with strict risk controls.
+A standalone Electron desktop application for Polymarket trading with AI-powered analysis, risk management, and real-time market monitoring.
+
+## Features
+
+- **Real-time Market Data**: WebSocket-driven data collection from Polymarket
+- **AI-Powered Analysis**: Three specialized AI agents (Analyzer, Reviewer, Risk Manager)
+- **Multi-Provider LLM Support**: 24+ providers including OpenAI, Anthropic, Gemini, DeepSeek, and more
+- **Risk Management**: Automatic circuit breakers, drawdown protection, and Kelly criterion position sizing
+- **Auto-Apply Filter Proposals**: High-confidence trading parameter adjustments
+- **Desktop Notifications**: Critical alerts and warnings via OS notifications
+- **Chat Interface**: Interactive Hall chat with all three agents
 
 ## Architecture
 
-- **TypeScript plugin** (this repo) running inside an OpenClaw-compatible host (e.g. RivonClaw). Houses the **Collector** (WebSocket subscription, rolling stats, trigger detection) and the **Executor** (Kelly sizing, four-route exit monitor, circuit breakers).
-- **Two OpenClaw agents** ("员工") configured separately by the user:
-  - `polymarket-analyzer` — judges signal truth on every trigger event.
-  - `polymarket-reviewer` — runs daily via OpenClaw cron, reads the trade journal, computes per-bucket win rates, generates filter proposals and kill-switch decisions.
-- **State** lives in `~/.polymarket-trader/data.db`. Reports go to `~/.polymarket-trader/reports/`.
+Monorepo structure with 4 packages:
 
-## Isolation from existing OpenClaw / RivonClaw installations
+- `@pmt/engine` - Trading engine (collector, executor, database)
+- `@pmt/llm` - LLM provider abstraction and agent runners
+- `@pmt/main` - Electron main process
+- `@pmt/renderer` - React UI
 
-This project runs OpenClaw with a **dedicated `OPENCLAW_HOME`** so it never touches `~/.openclaw/` or any other OpenClaw instance you may have on the same machine. All cron jobs, agent workspaces, sessions, and config live under `~/.polymarket-trader/openclaw/`.
+## Quick Start
 
-```
-~/.polymarket-trader/
-├── openclaw/                  # OPENCLAW_HOME — fully isolated OpenClaw config
-│   ├── openclaw.json
-│   ├── agents/
-│   │   ├── polymarket-analyzer/
-│   │   └── polymarket-reviewer/
-│   └── cron/jobs.json
-├── data.db                    # plugin SQLite (sibling to openclaw/)
-└── reports/                   # Reviewer markdown output
-```
+### Prerequisites
 
-**Start the project's OpenClaw instance:**
+- Node.js 24+
+- pnpm 10+
+
+### Installation
 
 ```bash
-# macOS / Linux
-export OPENCLAW_HOME="$HOME/.polymarket-trader/openclaw"
-openclaw start
+# Install dependencies
+pnpm install
 
-# Windows PowerShell
-$env:OPENCLAW_HOME = "$env:USERPROFILE\.polymarket-trader\openclaw"
-openclaw start
+# Build all packages
+pnpm build
+
+# Run in development mode
+pnpm dev
 ```
 
-You can keep your existing RivonClaw or other OpenClaw setup running concurrently — they use the default `~/.openclaw/` and never see this project's state.
+### Packaging
 
-**Optional override:** Set `POLYMARKET_TRADER_HOME` to put `data.db` and `reports/` somewhere other than `~/.polymarket-trader/`.
+```bash
+# Build for current platform
+pnpm dist
 
-## Independence
+# Build for specific platforms
+pnpm dist:mac
+pnpm dist:win
+pnpm dist:linux
+```
 
-This project has **zero dependencies** on RivonClaw or `@mariozechner/openclaw` packages. The OpenClaw plugin API surface is inlined as `src/plugin-sdk.ts` (~30 lines of types and one `definePlugin()` helper). `pnpm install && pnpm build` from a fresh clone produces a self-contained `dist/polymarket-trader.mjs` you can drop into any OpenClaw runtime.
+## Development
 
-## Status
+```bash
+# Run tests
+pnpm test:run
 
-Spec and implementation plan are in `docs/specs/` and `docs/plans/`. Implementation has not started.
+# Type check
+pnpm typecheck
+
+# Clean build artifacts
+pnpm clean
+```
+
+## Configuration
+
+The application stores data in:
+
+- **macOS**: `~/Library/Application Support/polymarket-trader/`
+- **Windows**: `%APPDATA%/polymarket-trader/`
+- **Linux**: `~/.config/polymarket-trader/`
+
+Override with `POLYMARKET_TRADER_HOME` environment variable.
+
+## LLM Providers
+
+Supported providers:
+
+- **API Key**: OpenAI, Anthropic, DeepSeek, Zhipu, Gemini, Groq, Mistral, xAI, OpenRouter, and more
+- **Subscription**: Anthropic (Claude CLI), Google OAuth
+- **Local**: Ollama
+- **AWS**: Bedrock
+
+Configure providers in Settings → LLM Providers.
+
+## Risk Controls
+
+- Daily/weekly drawdown halts
+- Max single trade loss limits
+- Kelly criterion position sizing
+- Strategy kill switches
+- Emergency stop
 
 ## License
 
 TBD
-# polymarket-claw

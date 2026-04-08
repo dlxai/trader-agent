@@ -7,7 +7,7 @@ const SCHEMA_SQL_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
   "schema.sql"
 );
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
 
 export function runMigrations(db: Database.Database): void {
   const schemaSql = readFileSync(SCHEMA_SQL_PATH, "utf-8");

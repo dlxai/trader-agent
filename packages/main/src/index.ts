@@ -18,12 +18,14 @@ import {
   createCoordinatorScheduler,
   type CoordinatorScheduler,
 } from "./coordinator.js";
+import { showNotification } from "./notifications.js";
 import { runReviewer } from "@pmt/engine/reviewer";
 import {
   createSignalLogRepo,
   createStrategyPerformanceRepo,
 } from "@pmt/engine";
 import { createRiskMgrRunner } from "@pmt/llm";
+import { processProposals } from "./auto-apply.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const preloadPath = join(__dirname, "preload.js");
@@ -67,6 +69,11 @@ async function onReady(): Promise<void> {
         strategyPerfRepo: createStrategyPerformanceRepo(ctx.db),
         logger: noopLogger,
       });
+      // After Reviewer generates new proposals, immediately try to auto-apply
+      const autoApplyResult = processProposals(ctx.db);
+      if (autoApplyResult.applied > 0 || autoApplyResult.skipped > 0) {
+        console.log("[reviewer] auto-apply:", autoApplyResult);
+      }
       return {
         bucketCount: result.bucketCount,
         killSwitches: result.killSwitches,
@@ -136,6 +143,7 @@ async function onReady(): Promise<void> {
       });
     },
     onBrief: (brief) => {
+      // Persist to coordinator_log
       ctx.db
         .prepare(
           "INSERT INTO coordinator_log (generated_at, summary, alerts, suggestions, context_snapshot, model_used) VALUES (?, ?, ?, ?, ?, ?)"
@@ -148,6 +156,26 @@ async function onReady(): Promise<void> {
           "{}",
           ""
         );
+
+      // Show OS notification for any critical alerts
+      for (const alert of brief.alerts) {
+        if (alert.severity === "critical") {
+          showNotification({
+            title: "Polymarket Trader: Critical Alert",
+            body: alert.text,
+          });
+        } else if (alert.severity === "warning") {
+          showNotification({
+            title: "Polymarket Trader: Warning",
+            body: alert.text,
+            silent: true,
+          });
+        }
+      }
+
+      // Push event to renderer (Dashboard banner update)
+      const wc = mainWindow?.webContents();
+      wc?.send("coordinator:brief", brief);
     },
   });
   coordinatorScheduler.start();

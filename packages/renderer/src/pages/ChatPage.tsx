@@ -144,6 +144,8 @@ export function ChatPage() {
   const [filter, setFilter] = useState<AgentFilter>("all");
   const [draft, setDraft] = useState<string>("");
   const messagesByAgent = useChat((s) => s.messagesByAgent);
+  const streamingByAgent = useChat((s) => s.streamingByAgent);
+  const streamingContentByAgent = useChat((s) => s.streamingContentByAgent);
   const pendingProposalCount = useSettings((s) => s.pendingProposals.length);
 
   // Hall coordination model: the chat store keeps per-agent arrays internally,
@@ -173,6 +175,20 @@ export function ChatPage() {
       ? MOCK_AGENTS.map((a) => a.model).join(" \u00B7 ")
       : getAgentMeta(filter).model;
 
+  // Check if any agent is currently streaming
+  const isStreaming = filter === "all" 
+    ? Object.values(streamingByAgent).some(Boolean)
+    : streamingByAgent[filter];
+  
+  // Get streaming content for display
+  const streamingContent = filter === "all"
+    ? Object.entries(streamingByAgent)
+        .filter(([_, isActive]) => isActive)
+        .map(([agentId]) => ({ agentId: agentId as AgentId, content: streamingContentByAgent[agentId as AgentId] }))
+    : filter && streamingByAgent[filter] 
+      ? [{ agentId: filter, content: streamingContentByAgent[filter] }]
+      : [];
+
   useEffect(() => {
     void useChat.getState().loadHistory("analyzer");
     void useChat.getState().loadHistory("reviewer");
@@ -183,7 +199,8 @@ export function ChatPage() {
     const text = draft.trim();
     if (text.length === 0) return;
     const target: AgentId = filter === "all" ? "risk_manager" : filter;
-    void useChat.getState().sendMessage(target, text);
+    // Use streaming version for better UX
+    void useChat.getState().sendMessageStream(target, text);
     setDraft("");
   };
 
@@ -225,7 +242,7 @@ export function ChatPage() {
 
           <div style={conversationStyle}>
             <div style={messagesScrollStyle} data-testid="hall-messages">
-              {visibleMessages.length === 0 ? (
+              {visibleMessages.length === 0 && !isStreaming ? (
                 <div
                   style={{
                     color: theme.colors.silverBlue,
@@ -237,18 +254,34 @@ export function ChatPage() {
                   No messages for this agent yet.
                 </div>
               ) : (
-                visibleMessages.map((m) => {
-                  const meta = getAgentMeta(m.agentId);
-                  return (
-                    <ChatMessage
-                      key={String(m.id)}
-                      role={m.role}
-                      content={m.content}
-                      agentIcon={meta.icon}
-                      agentName={meta.name}
-                    />
-                  );
-                })
+                <>
+                  {visibleMessages.map((m) => {
+                    const meta = getAgentMeta(m.agentId);
+                    return (
+                      <ChatMessage
+                        key={String(m.id)}
+                        role={m.role}
+                        content={m.content}
+                        agentIcon={meta.icon}
+                        agentName={meta.name}
+                      />
+                    );
+                  })}
+                  {/* Show streaming messages in progress */}
+                  {streamingContent.map(({ agentId, content }) => {
+                    const meta = getAgentMeta(agentId);
+                    return (
+                      <ChatMessage
+                        key={`streaming-${agentId}`}
+                        role="assistant"
+                        content={content}
+                        agentIcon={meta.icon}
+                        agentName={meta.name}
+                        isStreaming
+                      />
+                    );
+                  })}
+                </>
               )}
             </div>
 

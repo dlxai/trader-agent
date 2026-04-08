@@ -77,10 +77,13 @@ declare global {
       ): Promise<void>;
       getChatHistory(agentId: string, limit: number): Promise<unknown[]>;
       sendMessage(agentId: string, content: string): Promise<{ content: string }>;
+      sendMessageStream(agentId: string, content: string): Promise<{ content: string }>;
       clearChatHistory(agentId: string): Promise<void>;
       pauseTrading(): Promise<void>;
       resumeTrading(): Promise<void>;
       emergencyStop(): Promise<void>;
+      rollbackAutoApply(historyId: number): Promise<{ success: boolean }>;
+      getAutoApplyHistory(limit?: number): Promise<unknown[]>;
       on(event: string, handler: (...args: unknown[]) => void): () => void;
     };
   }

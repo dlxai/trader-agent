@@ -1,9 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-
-function App() {
-  return <div>Polymarket Trader — placeholder, real UI in M4</div>;
-}
+import { App } from "./App.js";
+import "./styles/global.css";
 
 const root = document.getElementById("root");
 if (root) {

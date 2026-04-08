@@ -151,9 +151,107 @@ export function registerIpcHandlers(deps: IpcDeps): void {
 
   ipcMain.handle(
     "connectProvider",
-    async (_e, _providerId: string, _credentials: unknown) => {
-      // M5.4 will implement provider connect using secrets store
-      return;
+    async (
+      _e,
+      providerId: string,
+      credentials: { apiKey?: string; baseUrl?: string }
+    ) => {
+      const ctx = deps.getEngineContext();
+      if (!ctx) throw new Error("engine not running");
+
+      // Lazy import inside handler to avoid loading all SDKs at boot
+      const {
+        createOpenAICompatProvider,
+        createAnthropicProvider,
+        createGeminiProvider,
+        createOllamaProvider,
+      } = await import("@pmt/llm");
+      const { createSecretStore } = await import("./secrets.js");
+      const secrets = createSecretStore();
+
+      let provider;
+      switch (providerId) {
+        case "anthropic_api":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(
+            `provider_${providerId}_apiKey`,
+            credentials.apiKey
+          );
+          provider = createAnthropicProvider({
+            mode: "api_key",
+            apiKey: credentials.apiKey,
+          });
+          break;
+        case "deepseek":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(
+            `provider_${providerId}_apiKey`,
+            credentials.apiKey
+          );
+          provider = createOpenAICompatProvider({
+            providerId: "deepseek" as never,
+            displayName: "DeepSeek",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://api.deepseek.com/v1",
+            defaultModels: [
+              { id: "deepseek-chat", contextWindow: 128000 },
+              { id: "deepseek-reasoner", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "zhipu":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(
+            `provider_${providerId}_apiKey`,
+            credentials.apiKey
+          );
+          provider = createOpenAICompatProvider({
+            providerId: "zhipu" as never,
+            displayName: "Zhipu / Z.ai",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+            defaultModels: [
+              { id: "glm-4.5", contextWindow: 128000 },
+              { id: "glm-4-flash", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "openai":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(
+            `provider_${providerId}_apiKey`,
+            credentials.apiKey
+          );
+          provider = createOpenAICompatProvider({
+            providerId: "openai" as never,
+            displayName: "OpenAI",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://api.openai.com/v1",
+            defaultModels: [{ id: "gpt-5", contextWindow: 200000 }],
+          });
+          break;
+        case "gemini_api":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(
+            `provider_${providerId}_apiKey`,
+            credentials.apiKey
+          );
+          provider = createGeminiProvider({
+            mode: "api_key",
+            apiKey: credentials.apiKey,
+          });
+          break;
+        case "ollama":
+          provider = createOllamaProvider({
+            baseUrl: credentials.baseUrl ?? "http://localhost:11434",
+          });
+          break;
+        default:
+          throw new Error(`unknown provider: ${providerId}`);
+      }
+
+      await provider.connect();
+      ctx.registry.register(provider);
     }
   );
 

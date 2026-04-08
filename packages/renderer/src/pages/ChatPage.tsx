@@ -1,22 +1,12 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { theme } from "../theme.js";
 import { Sidebar } from "../components/Sidebar.js";
 import {
   ChatMessage,
-  type ChatMessageRole,
   type AgentId,
 } from "../components/ChatMessage.js";
 import { EmployeeTab } from "../components/EmployeeTab.js";
-
-// M4.15-M4.18 — mock data only. M5 wires real IPC / LLM streams.
-
-interface HallMessage {
-  id: string;
-  agentId: AgentId;
-  role: ChatMessageRole;
-  content: string;
-  timestamp: number;
-}
+import { useChat } from "../stores/chat.js";
 
 interface AgentMeta {
   id: AgentId;
@@ -31,72 +21,7 @@ const MOCK_AGENTS: readonly AgentMeta[] = [
   { id: "risk_manager", icon: "\u{1F6E1}\uFE0F", name: "Risk Manager", model: "gemini-2.5-flash" },
 ] as const;
 
-const NOW = Date.now();
-
-const MOCK_HALL_MESSAGES: readonly HallMessage[] = [
-  {
-    id: "m1",
-    agentId: "risk_manager",
-    role: "system",
-    content:
-      "Coordinator brief \u00B7 auto-generated 23 min ago\n\n7 triggers detected in past hour, 2 entered (BTC YES, Lakers NO). Net flow on US Election markets unusually elevated \u2014 consider tightening unique_traders_1m to 4.",
-    timestamp: NOW - 23 * 60_000,
-  },
-  {
-    id: "m2",
-    agentId: "analyzer",
-    role: "assistant",
-    content:
-      "Scanning 142 active markets. Top momentum signals:\n\n- BTC > $100k by Apr 10 (net flow +$4.2k/min)\n- Lakers vs Celtics tonight (unique traders 7/min)\n- Trump approval > 50% by May (steady drift)",
-    timestamp: NOW - 18 * 60_000,
-  },
-  {
-    id: "m3",
-    agentId: "analyzer",
-    role: "user",
-    content: "@analyzer what's driving the BTC market's acceleration right now?",
-    timestamp: NOW - 15 * 60_000,
-  },
-  {
-    id: "m4",
-    agentId: "analyzer",
-    role: "assistant",
-    content:
-      "Three concurrent factors:\n1. Spot BTC cleared $98.2k resistance 11 min ago\n2. Unique traders jumped from 3/min to 9/min\n3. YES side order book thickened 2.4x",
-    timestamp: NOW - 14 * 60_000,
-  },
-  {
-    id: "m5",
-    agentId: "reviewer",
-    role: "assistant",
-    content:
-      "Weekly review snapshot: bucket 0.40-0.45 remains the standout (71.4% win rate, +$56.20). Recommending we keep current sizing on that bucket and pull back on 0.55-0.60.",
-    timestamp: NOW - 11 * 60_000,
-  },
-  {
-    id: "m6",
-    agentId: "risk_manager",
-    role: "user",
-    content: "@risk_manager are we close to any halts? What's our drawdown right now?",
-    timestamp: NOW - 5 * 60_000,
-  },
-  {
-    id: "m7",
-    agentId: "risk_manager",
-    role: "assistant",
-    content:
-      "Currently safe on all halts:\n\n- Daily DD: -0.8% (halt at -2.0%)\n- Weekly DD: -1.5% (halt at -4.0%)\n- Total DD from peak: -1.2%\n\nRisk budget: $94.50 remaining today.",
-    timestamp: NOW - 4 * 60_000,
-  },
-  {
-    id: "m8",
-    agentId: "reviewer",
-    role: "user",
-    content: "@reviewer should we push the filter proposal for min_unique_traders_1m tonight?",
-    timestamp: NOW - 2 * 60_000,
-  },
-] as const;
-
+// M5.14 will replace this with useSettings((s) => s.pendingProposals.length).
 const MOCK_PENDING_PROPOSAL_COUNT = 2;
 
 type AgentFilter = "all" | AgentId;
@@ -211,7 +136,6 @@ const allTabStyle = (isActive: boolean): React.CSSProperties => ({
 
 function getAgentMeta(id: AgentId): AgentMeta {
   const match = MOCK_AGENTS.find((a) => a.id === id);
-  // MOCK_AGENTS is a static const that contains every AgentId, so match is defined.
   if (match === undefined) {
     throw new Error(`Unknown agent id: ${id}`);
   }
@@ -220,11 +144,27 @@ function getAgentMeta(id: AgentId): AgentMeta {
 
 export function ChatPage() {
   const [filter, setFilter] = useState<AgentFilter>("all");
+  const [draft, setDraft] = useState<string>("");
+  const messagesByAgent = useChat((s) => s.messagesByAgent);
+
+  // Hall coordination model: the chat store keeps per-agent arrays internally,
+  // but the Hall view flattens + sorts them by timestamp so all three agents
+  // share one conversation thread. Agent tabs filter the flattened list.
+  const flattened = useMemo(() => {
+    const all = [
+      ...messagesByAgent.analyzer.map((m) => ({ ...m, agentId: "analyzer" as AgentId })),
+      ...messagesByAgent.reviewer.map((m) => ({ ...m, agentId: "reviewer" as AgentId })),
+      ...messagesByAgent.risk_manager.map((m) => ({
+        ...m,
+        agentId: "risk_manager" as AgentId,
+      })),
+    ];
+    all.sort((a, b) => a.timestamp - b.timestamp);
+    return all;
+  }, [messagesByAgent]);
 
   const visibleMessages =
-    filter === "all"
-      ? MOCK_HALL_MESSAGES
-      : MOCK_HALL_MESSAGES.filter((m) => m.agentId === filter);
+    filter === "all" ? flattened : flattened.filter((m) => m.agentId === filter);
 
   const activeLabel =
     filter === "all" ? "All agents (Hall)" : getAgentMeta(filter).name;
@@ -233,6 +173,20 @@ export function ChatPage() {
     filter === "all"
       ? MOCK_AGENTS.map((a) => a.model).join(" \u00B7 ")
       : getAgentMeta(filter).model;
+
+  useEffect(() => {
+    void useChat.getState().loadHistory("analyzer");
+    void useChat.getState().loadHistory("reviewer");
+    void useChat.getState().loadHistory("risk_manager");
+  }, []);
+
+  const handleSend = () => {
+    const text = draft.trim();
+    if (text.length === 0) return;
+    const target: AgentId = filter === "all" ? "risk_manager" : filter;
+    void useChat.getState().sendMessage(target, text);
+    setDraft("");
+  };
 
   return (
     <div style={layoutStyle}>
@@ -288,7 +242,7 @@ export function ChatPage() {
                   const meta = getAgentMeta(m.agentId);
                   return (
                     <ChatMessage
-                      key={m.id}
+                      key={String(m.id)}
                       role={m.role}
                       content={m.content}
                       agentIcon={meta.icon}
@@ -308,9 +262,13 @@ export function ChatPage() {
                     : `Message ${getAgentMeta(filter).name}...`
                 }
                 style={inputStyle}
-                disabled
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSend();
+                }}
               />
-              <button type="button" style={sendButtonStyle} disabled>
+              <button type="button" style={sendButtonStyle} onClick={handleSend}>
                 Send
               </button>
             </div>

@@ -17,10 +17,14 @@
 import { ipcMain } from "electron";
 import type { EngineContext } from "./lifecycle.js";
 import type { RiskMgrRunner } from "@pmt/llm";
+import type { ReviewerScheduler } from "./reviewer-scheduler.js";
+import type { CoordinatorScheduler } from "./coordinator.js";
 
 export interface IpcDeps {
   getEngineContext: () => EngineContext | null;
   getRiskMgrRunner: () => RiskMgrRunner | null;
+  getReviewerScheduler: () => ReviewerScheduler | null;
+  getCoordinatorScheduler: () => CoordinatorScheduler | null;
 }
 
 export function registerIpcHandlers(deps: IpcDeps): void {
@@ -64,8 +68,9 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle("triggerCoordinatorNow", async () => {
-    // M5.6 will wire this to the scheduler.triggerNow()
-    return null;
+    const sched = deps.getCoordinatorScheduler();
+    if (!sched) throw new Error("coordinator scheduler not started");
+    return sched.triggerNow();
   });
 
   // Reports
@@ -80,8 +85,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   ipcMain.handle("triggerReviewerNow", async () => {
-    // M5.6
-    return null;
+    const sched = deps.getReviewerScheduler();
+    if (!sched) throw new Error("reviewer scheduler not started");
+    await sched.triggerNow();
+    return true;
   });
 
   // Filter proposals

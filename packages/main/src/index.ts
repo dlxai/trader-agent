@@ -155,6 +155,8 @@ async function onReady(): Promise<void> {
   registerIpcHandlers({
     getEngineContext,
     getRiskMgrRunner: () => riskMgrRunner,
+    getReviewerScheduler: () => reviewerScheduler,
+    getCoordinatorScheduler: () => coordinatorScheduler,
   });
 
   // Start collector (engine WS subscription)

@@ -1,6 +1,6 @@
 # Polymarket Trader
 
-A standalone Electron desktop application for Polymarket trading with AI-powered analysis, risk management, and real-time market monitoring.
+A desktop application for Polymarket trading with AI-powered analysis, risk management, and real-time market monitoring. Supports both **standalone Electron mode** and **OpenClaw plugin mode**.
 
 ## Features
 
@@ -11,15 +11,21 @@ A standalone Electron desktop application for Polymarket trading with AI-powered
 - **Auto-Apply Filter Proposals**: High-confidence trading parameter adjustments
 - **Desktop Notifications**: Critical alerts and warnings via OS notifications
 - **Chat Interface**: Interactive Hall chat with all three agents
+- **OpenClaw Integration**: Run as OpenClaw plugin with cron-based scheduling
 
 ## Architecture
 
 Monorepo structure with 4 packages:
 
-- `@pmt/engine` - Trading engine (collector, executor, database)
+- `@pmt/engine` - Trading engine (collector, executor, database) + OpenClaw plugin SDK
 - `@pmt/llm` - LLM provider abstraction and agent runners
-- `@pmt/main` - Electron main process
+- `@pmt/main` - Electron main process with OpenClaw bridge
 - `@pmt/renderer` - React UI
+
+### Running Modes
+
+1. **Standalone Mode** (default): Built-in schedulers for Reviewer (daily) and Coordinator (hourly)
+2. **OpenClaw Plugin Mode**: OpenClaw manages agent scheduling via cron triggers
 
 ## Quick Start
 
@@ -52,6 +58,25 @@ pnpm dist:mac
 pnpm dist:win
 pnpm dist:linux
 ```
+
+### OpenClaw Plugin Mode
+
+Run as an OpenClaw plugin with external scheduling:
+
+```bash
+# Start in OpenClaw plugin mode (Windows)
+pnpm start:openclaw
+
+# Or set environment variable manually
+set OPENCLAW_PLUGIN_MODE=true
+pnpm start
+```
+
+In OpenClaw mode:
+- Reviewer runs on cron schedule `0 0 * * *` (daily at midnight)
+- Coordinator runs on cron schedule `0 * * * *` (hourly)
+- Analyzer triggers on trading signals
+- Electron UI receives events via the OpenClaw bridge
 
 ## Development
 

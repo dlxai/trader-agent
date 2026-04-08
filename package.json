@@ -2,7 +2,7 @@
   "name": "polymarket-trader",
   "private": true,
   "version": "0.2.0",
-  "description": "Standalone Polymarket trading desktop application",
+  "description": "Polymarket trading desktop application with OpenClaw plugin support",
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
@@ -13,17 +13,20 @@
     "postinstall": "electron-builder install-app-deps",
     "dev": "pnpm --filter @pmt/renderer dev",
     "start": "pnpm build && pnpm --filter @pmt/main start",
+    "start:openclaw": "set OPENCLAW_PLUGIN_MODE=true && pnpm build && pnpm --filter @pmt/main start",
     "electron:dev": "pnpm --filter @pmt/main electron:dev",
+    "electron:dev:openclaw": "set OPENCLAW_PLUGIN_MODE=true && pnpm --filter @pmt/main electron:dev:win",
     "dist": "pnpm build && electron-builder",
     "dist:mac": "pnpm build && electron-builder --mac",
     "dist:win": "pnpm build && electron-builder --win",
     "dist:linux": "pnpm build && electron-builder --linux"
   },
   "devDependencies": {
-    "typescript": "^5.8.2",
+    "@electron/get": "^4.0.3",
     "@types/node": "^22.10.5",
+    "electron": "^30.0.0",
     "electron-builder": "^25.1.8",
-    "electron": "^30.0.0"
+    "typescript": "^5.8.2"
   },
   "engines": {
     "node": ">=24",

@@ -74,14 +74,42 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   });
 
   // Reports
-  ipcMain.handle("getRecentReports", async (_e, _limit: number) => {
-    // M5.7 will list reports from filesystem
-    return [];
+  ipcMain.handle("getRecentReports", async (_e, limit: number) => {
+    const { readdirSync, statSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const reportsDir = process.env.POLYMARKET_TRADER_HOME
+      ? join(process.env.POLYMARKET_TRADER_HOME, "reports")
+      : join(homedir(), ".polymarket-trader", "reports");
+
+    try {
+      const files = readdirSync(reportsDir)
+        .filter((f) => f.startsWith("review-") && f.endsWith(".md"))
+        .map((f) => {
+          const fullPath = join(reportsDir, f);
+          const stat = statSync(fullPath);
+          const dateStr = f.slice("review-".length, -".md".length);
+          return {
+            path: fullPath,
+            date: dateStr,
+            mtime: stat.mtimeMs,
+          };
+        })
+        .sort((a, b) => b.mtime - a.mtime)
+        .slice(0, limit);
+      return files;
+    } catch {
+      return [];
+    }
   });
 
-  ipcMain.handle("getReportContent", async (_e, _reportPath: string) => {
-    // M5.7
-    return "";
+  ipcMain.handle("getReportContent", async (_e, reportPath: string) => {
+    const { readFileSync } = await import("node:fs");
+    try {
+      return readFileSync(reportPath, "utf-8");
+    } catch {
+      return "";
+    }
   });
 
   ipcMain.handle("triggerReviewerNow", async () => {

@@ -84,6 +84,8 @@ declare global {
       emergencyStop(): Promise<void>;
       rollbackAutoApply(historyId: number): Promise<{ success: boolean }>;
       getAutoApplyHistory(limit?: number): Promise<unknown[]>;
+      getProxyConfig(): Promise<{ enabled: boolean; httpProxy: string; httpsProxy: string }>;
+      setProxyConfig(config: { enabled: boolean; httpProxy: string; httpsProxy: string }): Promise<{ success: boolean }>;
       on(event: string, handler: (...args: unknown[]) => void): () => void;
     };
   }

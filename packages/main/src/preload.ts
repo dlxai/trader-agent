@@ -63,6 +63,11 @@ const api = {
   rollbackAutoApply: (historyId: number) => ipcRenderer.invoke("rollbackAutoApply", historyId),
   getAutoApplyHistory: (limit?: number) => ipcRenderer.invoke("getAutoApplyHistory", limit),
 
+  // Proxy configuration
+  getProxyConfig: () => ipcRenderer.invoke("getProxyConfig"),
+  setProxyConfig: (config: { enabled: boolean; httpProxy: string; httpsProxy: string }) =>
+    ipcRenderer.invoke("setProxyConfig", config),
+
   // Event subscriptions (Main -> Renderer push)
   on: (event: string, handler: (...args: unknown[]) => void) => {
     const wrapped = (_e: unknown, ...args: unknown[]) => handler(...args);

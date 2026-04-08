@@ -117,6 +117,21 @@ export async function bootEngine(): Promise<EngineContext> {
     console.error("[lifecycle] failed to load stored providers:", err);
   }
 
+  // Load proxy configuration from database
+  let proxyUrl: string | undefined;
+  try {
+    const proxyRow = db.prepare("SELECT value FROM filter_config WHERE key = 'proxy_config'").get() as { value: string } | undefined;
+    if (proxyRow) {
+      const proxyConfig = JSON.parse(proxyRow.value) as { enabled: boolean; httpsProxy: string };
+      if (proxyConfig.enabled && proxyConfig.httpsProxy) {
+        proxyUrl = proxyConfig.httpsProxy;
+        console.log(`[lifecycle] Using proxy: ${proxyUrl}`);
+      }
+    }
+  } catch {
+    // Ignore proxy config errors
+  }
+
   const collector = createCollector({
     config,
     bus,
@@ -125,6 +140,7 @@ export async function bootEngine(): Promise<EngineContext> {
         url: config.polymarketWsUrl,
         onTrade,
         onError: (err) => noopLogger.error(`[ws] ${err.message}`),
+        proxyUrl,
       }),
     marketMetadataProvider: placeholderMarketMetadataProvider,
     logger: noopLogger,

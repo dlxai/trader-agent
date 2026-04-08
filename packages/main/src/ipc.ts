@@ -629,4 +629,47 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       )
       .all(limit);
   });
+
+  // Proxy configuration
+  ipcMain.handle("getProxyConfig", async () => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return { enabled: false, httpProxy: "", httpsProxy: "" };
+    const row = ctx.db
+      .prepare("SELECT value FROM filter_config WHERE key = 'proxy_config'")
+      .get() as { value: string } | undefined;
+    if (!row) return { enabled: false, httpProxy: "", httpsProxy: "" };
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return { enabled: false, httpProxy: "", httpsProxy: "" };
+    }
+  });
+
+  ipcMain.handle("setProxyConfig", async (_e, config: { enabled: boolean; httpProxy: string; httpsProxy: string }) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    ctx.db
+      .prepare(
+        "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
+      )
+      .run("proxy_config", JSON.stringify(config), Date.now(), "user");
+    
+    // Update environment variables for current process
+    if (config.enabled && config.httpsProxy) {
+      process.env.https_proxy = config.httpsProxy;
+      process.env.HTTPS_PROXY = config.httpsProxy;
+    } else {
+      delete process.env.https_proxy;
+      delete process.env.HTTPS_PROXY;
+    }
+    if (config.enabled && config.httpProxy) {
+      process.env.http_proxy = config.httpProxy;
+      process.env.HTTP_PROXY = config.httpProxy;
+    } else {
+      delete process.env.http_proxy;
+      delete process.env.HTTP_PROXY;
+    }
+    
+    return { success: true };
+  });
 }

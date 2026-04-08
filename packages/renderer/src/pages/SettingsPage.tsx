@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { theme } from "../theme.js";
 import { Sidebar } from "../components/Sidebar.js";
 import { ProviderCard } from "../components/ProviderCard.js";
@@ -60,8 +60,24 @@ export function SettingsPage() {
   const riskLimits = useSettings((s) => s.riskLimits);
   const proposals = useSettings((s) => s.pendingProposals);
 
+  // Proxy configuration state
+  const [proxyEnabled, setProxyEnabled] = useState(false);
+  const [httpProxy, setHttpProxy] = useState("");
+  const [httpsProxy, setHttpsProxy] = useState("");
+  const [proxySaved, setProxySaved] = useState(false);
+
   useEffect(() => {
     void useSettings.getState().refresh();
+    // Load proxy config
+    if (isElectron()) {
+      pmt.getProxyConfig().then((config) => {
+        setProxyEnabled(config.enabled);
+        setHttpProxy(config.httpProxy || "");
+        setHttpsProxy(config.httpsProxy || "");
+      }).catch(() => {
+        // Ignore errors
+      });
+    }
   }, []);
 
   const handleApprove = async (id: number) => {
@@ -83,6 +99,18 @@ export function SettingsPage() {
       } finally {
         void useSettings.getState().refresh();
       }
+    }
+  };
+
+  const handleSaveProxy = async () => {
+    if (isElectron()) {
+      await pmt.setProxyConfig({
+        enabled: proxyEnabled,
+        httpProxy,
+        httpsProxy,
+      });
+      setProxySaved(true);
+      setTimeout(() => setProxySaved(false), 2000);
     }
   };
 
@@ -349,6 +377,82 @@ export function SettingsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+
+        {/* Proxy Configuration section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>🌐 Proxy Configuration</div>
+          <div style={sectionSubtitleStyle}>
+            Configure proxy for WebSocket connections to Polymarket
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", cursor: "pointer", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={proxyEnabled}
+                onChange={(e) => setProxyEnabled(e.target.checked)}
+                style={{ marginRight: 8 }}
+              />
+              <span>Enable Proxy</span>
+            </label>
+          </div>
+          {proxyEnabled && (
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>
+                  HTTP Proxy
+                </label>
+                <input
+                  type="text"
+                  value={httpProxy}
+                  onChange={(e) => setHttpProxy(e.target.value)}
+                  placeholder="http://127.0.0.1:7890"
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    border: `1px solid ${theme.colors.borderGray}`,
+                    borderRadius: 6,
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>
+                  HTTPS Proxy
+                </label>
+                <input
+                  type="text"
+                  value={httpsProxy}
+                  onChange={(e) => setHttpsProxy(e.target.value)}
+                  placeholder="http://127.0.0.1:7890"
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    border: `1px solid ${theme.colors.borderGray}`,
+                    borderRadius: 6,
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          <div style={{ marginTop: 16 }}>
+            <button
+              onClick={() => void handleSaveProxy()}
+              style={{
+                background: theme.colors.purple,
+                color: theme.colors.white,
+                border: "none",
+                borderRadius: 6,
+                padding: "8px 16px",
+                fontSize: 14,
+                fontWeight: theme.font.weights.medium,
+                cursor: "pointer",
+              }}
+            >
+              {proxySaved ? "✓ Saved" : "Save Proxy Settings"}
+            </button>
+          </div>
         </div>
 
         {/* Risk Limits section */}

@@ -8,6 +8,7 @@
  * plugin's internal Trade type. Reconnect uses exponential backoff.
  */
 import WebSocket from "ws";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import type { Trade } from "./rolling-window.js";
 
 export interface WsClientOptions {
@@ -16,6 +17,7 @@ export interface WsClientOptions {
   onError: (err: Error) => void;
   reconnectInitialMs?: number;
   reconnectMaxMs?: number;
+  proxyUrl?: string;
 }
 
 export interface PolymarketWsClient {
@@ -51,7 +53,12 @@ export function createPolymarketWsClient(opts: WsClientOptions): PolymarketWsCli
 
   async function connectInternal(): Promise<void> {
     return new Promise((resolve, reject) => {
-      socket = new WebSocket(opts.url);
+      // Support proxy for WebSocket connection
+      const proxyUrl = opts.proxyUrl || process.env.https_proxy || process.env.HTTPS_PROXY;
+      const wsOptions: WebSocket.ClientOptions = proxyUrl
+        ? { agent: new HttpsProxyAgent(proxyUrl) }
+        : {};
+      socket = new WebSocket(opts.url, wsOptions);
       socket.on("open", () => {
         backoffMs = opts.reconnectInitialMs ?? 1000;
         resolve();

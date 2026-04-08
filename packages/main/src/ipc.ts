@@ -19,12 +19,14 @@ import type { EngineContext } from "./lifecycle.js";
 import type { RiskMgrRunner } from "@pmt/llm";
 import type { ReviewerScheduler } from "./reviewer-scheduler.js";
 import type { CoordinatorScheduler } from "./coordinator.js";
+import type { WindowHandle } from "./window.js";
 
 export interface IpcDeps {
   getEngineContext: () => EngineContext | null;
   getRiskMgrRunner: () => RiskMgrRunner | null;
   getReviewerScheduler: () => ReviewerScheduler | null;
   getCoordinatorScheduler: () => CoordinatorScheduler | null;
+  getMainWindow: () => WindowHandle | null;
 }
 
 export function registerIpcHandlers(deps: IpcDeps): void {
@@ -340,10 +342,92 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     }
   );
 
-  ipcMain.handle("sendMessage", async (_e, _agentId: string, _content: string) => {
-    // M5.9 will implement streaming chat via riskMgrRunner / runner
-    return null;
-  });
+  ipcMain.handle(
+    "sendMessage",
+    async (_e, agentId: string, content: string) => {
+      const ctx = deps.getEngineContext();
+      if (!ctx) throw new Error("engine not running");
+      const window = deps.getMainWindow();
+
+      // Persist user message
+      ctx.db
+        .prepare(
+          "INSERT INTO chat_messages (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .run(agentId, "user", content, Date.now());
+
+      if (agentId !== "risk_manager") {
+        // M5: only risk_manager has reactive chat. Analyzer/Reviewer chats
+        // can be added in a follow-up task.
+        const placeholder = `(${agentId} chat not yet wired — coming in a follow-up task)`;
+        ctx.db
+          .prepare(
+            "INSERT INTO chat_messages (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+          )
+          .run(agentId, "assistant", placeholder, Date.now());
+        return { content: placeholder };
+      }
+
+      const runner = deps.getRiskMgrRunner();
+      if (!runner) throw new Error("risk manager runner not configured");
+
+      // Build current system state snapshot
+      const portfolioRows = ctx.db
+        .prepare("SELECT key, value FROM portfolio_state")
+        .all() as Array<{ key: string; value: string }>;
+      const portfolioState = Object.fromEntries(
+        portfolioRows.map((r) => {
+          try {
+            return [r.key, JSON.parse(r.value)];
+          } catch {
+            return [r.key, r.value];
+          }
+        })
+      ) as Record<string, unknown>;
+      const recentTrades = ctx.db
+        .prepare(
+          "SELECT market_title, direction, pnl_net_usdc, exit_reason FROM signal_log WHERE exit_at IS NOT NULL ORDER BY exit_at DESC LIMIT 5"
+        )
+        .all() as Array<{
+        market_title: string;
+        direction: string;
+        pnl_net_usdc: number | null;
+        exit_reason: string | null;
+      }>;
+      const openCountRow = ctx.db
+        .prepare("SELECT COUNT(*) as n FROM signal_log WHERE exit_at IS NULL")
+        .get() as { n: number } | undefined;
+      const openCount = openCountRow?.n ?? 0;
+
+      const reply: string = await runner.answerQuestion({
+        question: content,
+        systemState: {
+          portfolioState: {
+            current_equity: Number(portfolioState.current_equity ?? 10000),
+            day_start_equity: Number(portfolioState.day_start_equity ?? 10000),
+            daily_halt_triggered: Boolean(
+              portfolioState.daily_halt_triggered ?? false
+            ),
+          },
+          recentTrades,
+          openPositionCount: openCount,
+        },
+      });
+
+      // Persist assistant message
+      ctx.db
+        .prepare(
+          "INSERT INTO chat_messages (agent_id, role, content, created_at) VALUES (?, ?, ?, ?)"
+        )
+        .run(agentId, "assistant", reply, Date.now());
+
+      // Notify renderer (event push)
+      const wc = window?.webContents();
+      wc?.send("chat:complete", { agentId, role: "assistant", content: reply });
+
+      return { content: reply };
+    }
+  );
 
   ipcMain.handle("clearChatHistory", async (_e, agentId: string) => {
     const ctx = deps.getEngineContext();

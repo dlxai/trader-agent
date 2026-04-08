@@ -157,6 +157,7 @@ async function onReady(): Promise<void> {
     getRiskMgrRunner: () => riskMgrRunner,
     getReviewerScheduler: () => reviewerScheduler,
     getCoordinatorScheduler: () => coordinatorScheduler,
+    getMainWindow: () => mainWindow,
   });
 
   // Start collector (engine WS subscription)

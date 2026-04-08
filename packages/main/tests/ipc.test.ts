@@ -24,6 +24,7 @@ describe("registerIpcHandlers", () => {
       getRiskMgrRunner: () => null,
       getReviewerScheduler: () => null,
       getCoordinatorScheduler: () => null,
+      getMainWindow: () => null,
     });
     const registered = mockIpcMain.handle.mock.calls.map((c) => c[0]);
     expect(registered).toContain("getPortfolioState");

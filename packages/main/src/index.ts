@@ -6,7 +6,8 @@
 import { app } from "electron";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootEngine, shutdownEngine } from "./lifecycle.js";
+import { bootEngine, shutdownEngine, getEngineContext } from "./lifecycle.js";
+import { registerIpcHandlers } from "./ipc.js";
 import { createTray, type TrayHandle } from "./tray.js";
 import { createMainWindow, type WindowHandle } from "./window.js";
 import {
@@ -150,6 +151,11 @@ async function onReady(): Promise<void> {
     },
   });
   coordinatorScheduler.start();
+
+  registerIpcHandlers({
+    getEngineContext,
+    getRiskMgrRunner: () => riskMgrRunner,
+  });
 
   // Start collector (engine WS subscription)
   await ctx.collector.start();

@@ -9,7 +9,10 @@
     "test": "vitest",
     "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "start": "electron dist/index.js",
+    "electron:dev": "NODE_ENV=development electron dist/index.js",
+    "electron:dev:win": "set NODE_ENV=development && electron dist/index.js"
   },
   "dependencies": {
     "@pmt/engine": "workspace:*",

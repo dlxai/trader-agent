@@ -1,0 +1,48 @@
+{
+  "appId": "com.polymarket.trader",
+  "productName": "Polymarket Trader",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "packages/main/dist/**/*",
+    "packages/renderer/dist/**/*",
+    "node_modules/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "packages/engine/dist",
+      "to": "engine"
+    }
+  ],
+  "mac": {
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      }
+    ],
+    "category": "public.app-category.finance"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "linux": {
+    "target": [
+      {
+        "target": "AppImage",
+        "arch": ["x64"]
+      }
+    ],
+    "category": "Office"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  }
+}

@@ -10,7 +10,14 @@
     "test:run": "pnpm -r test:run",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r clean",
-    "postinstall": "electron-builder install-app-deps"
+    "postinstall": "electron-builder install-app-deps",
+    "dev": "pnpm --filter @pmt/renderer dev",
+    "start": "pnpm build && pnpm --filter @pmt/main start",
+    "electron:dev": "pnpm --filter @pmt/main electron:dev",
+    "dist": "pnpm build && electron-builder",
+    "dist:mac": "pnpm build && electron-builder --mac",
+    "dist:win": "pnpm build && electron-builder --win",
+    "dist:linux": "pnpm build && electron-builder --linux"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

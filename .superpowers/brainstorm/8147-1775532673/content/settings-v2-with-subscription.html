@@ -1,0 +1,143 @@
+<h2>Settings v2 — 加上 Subscription / Coding Plan 支持</h2>
+<p class="subtitle">LLM section 现在分两栏：API Key 模式 + Subscription 模式</p>
+
+<div class="mockup">
+  <div class="mockup-header">Settings → LLM Providers (扩展版)</div>
+  <div class="mockup-body" style="padding: 0; background: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #101114;">
+    <div style="padding: 32px;">
+
+      <!-- LLM section -->
+      <div style="background: white; border: 1px solid #dedee5; border-radius: 12px; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+          <div style="font-size: 18px; font-weight: 600;">🤖 LLM Providers</div>
+          <div style="font-size: 12px; color: #149e61; font-weight: 500;">3 connected</div>
+        </div>
+        <div style="font-size: 13px; color: #9497a9; margin-bottom: 24px;">Configure API keys, subscriptions, and per-agent model overrides</div>
+
+        <!-- Tab switcher -->
+        <div style="display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #dedee5;">
+          <div style="padding: 10px 16px; border-bottom: 2px solid #7132f5; color: #7132f5; font-weight: 600; font-size: 14px;">API Key (4)</div>
+          <div style="padding: 10px 16px; border-bottom: 2px solid transparent; color: #686b82; font-weight: 500; font-size: 14px;">Subscription / Coding (4) <span style="background: #149e61; color: white; padding: 1px 6px; border-radius: 999px; font-size: 10px; margin-left: 4px;">2</span></div>
+        </div>
+
+        <!-- API Key tab -->
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px;">
+          <div style="border: 2px solid #7132f5; padding: 14px; border-radius: 10px; background: rgba(133,91,251,0.04);">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+              <div>
+                <div style="font-weight: 600;">Anthropic</div>
+                <div style="font-size: 11px; color: #686b82; margin-top: 2px;">API Key · sk-ant-...4f2a</div>
+              </div>
+              <div style="font-size: 11px; color: #149e61; font-weight: 500;">● Connected</div>
+            </div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 8px;">Models: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 14px; border-radius: 10px;">
+            <div style="font-weight: 600;">DeepSeek</div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 2px;">Not configured</div>
+            <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 5px 12px; border-radius: 6px; border: none; font-size: 11px; margin-top: 8px; font-weight: 500;">+ Add API key</button>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 14px; border-radius: 10px;">
+            <div style="font-weight: 600;">Zhipu / Z.ai</div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 2px;">Not configured</div>
+            <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 5px 12px; border-radius: 6px; border: none; font-size: 11px; margin-top: 8px; font-weight: 500;">+ Add API key</button>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 14px; border-radius: 10px;">
+            <div style="font-weight: 600;">OpenAI</div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 2px;">Not configured</div>
+            <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 5px 12px; border-radius: 6px; border: none; font-size: 11px; margin-top: 8px; font-weight: 500;">+ Add API key</button>
+          </div>
+        </div>
+
+        <!-- Subscription tab (shown below as second view) -->
+        <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; font-weight: 500; margin-bottom: 12px; border-top: 1px dashed #dedee5; padding-top: 16px;">↓ Subscription / Coding Plans (auto-detected when possible)</div>
+
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 24px;">
+          <!-- Claude subscription -->
+          <div style="border: 2px solid #149e61; padding: 14px; border-radius: 10px; background: rgba(20,158,97,0.04);">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+              <div>
+                <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">Claude (Anthropic Sub) <span style="background: rgba(20,158,97,0.16); color: #026b3f; padding: 1px 6px; border-radius: 4px; font-size: 9px; text-transform: uppercase; font-weight: 600;">Auto</span></div>
+                <div style="font-size: 11px; color: #686b82; margin-top: 2px;">Detected: ~/.claude/credentials.json</div>
+              </div>
+              <div style="font-size: 11px; color: #149e61; font-weight: 500;">● Active</div>
+            </div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 8px;">Plan: Max · Resets in 4d 12h · No per-call cost</div>
+          </div>
+
+          <!-- Gemini -->
+          <div style="border: 2px solid #149e61; padding: 14px; border-radius: 10px; background: rgba(20,158,97,0.04);">
+            <div style="display: flex; justify-content: space-between; align-items: start;">
+              <div>
+                <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">Gemini (Google OAuth) <span style="background: rgba(20,158,97,0.16); color: #026b3f; padding: 1px 6px; border-radius: 4px; font-size: 9px; text-transform: uppercase; font-weight: 600;">OAuth</span></div>
+                <div style="font-size: 11px; color: #686b82; margin-top: 2px;">user@gmail.com · Free tier</div>
+              </div>
+              <div style="font-size: 11px; color: #149e61; font-weight: 500;">● Active</div>
+            </div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 8px;">Models: gemini-2.5-pro, gemini-2.5-flash · Quota: 1000/day</div>
+          </div>
+
+          <!-- Zhipu Coding -->
+          <div style="border: 1px solid #dedee5; padding: 14px; border-radius: 10px;">
+            <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">Zhipu Coding Plan</div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 2px;">Not connected</div>
+            <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 5px 12px; border-radius: 6px; border: none; font-size: 11px; margin-top: 8px; font-weight: 500;">→ Connect</button>
+          </div>
+
+          <!-- Kimi Code -->
+          <div style="border: 1px solid #dedee5; padding: 14px; border-radius: 10px;">
+            <div style="font-weight: 600; display: flex; align-items: center; gap: 6px;">Kimi Code Plan</div>
+            <div style="font-size: 11px; color: #9497a9; margin-top: 2px;">Not connected</div>
+            <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 5px 12px; border-radius: 6px; border: none; font-size: 11px; margin-top: 8px; font-weight: 500;">→ Connect</button>
+          </div>
+        </div>
+
+        <!-- Per-agent model assignment -->
+        <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; font-weight: 500; margin-bottom: 12px; border-top: 1px dashed #dedee5; padding-top: 16px;">Per-agent model assignment</div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div>
+            <div style="font-size: 13px; color: #686b82; margin-bottom: 4px;">🧠 Analyzer</div>
+            <div style="border: 1px solid #dedee5; padding: 10px 12px; border-radius: 8px; font-size: 13px;">
+              <div style="font-weight: 500;">claude-opus-4-6</div>
+              <div style="font-size: 10px; color: #149e61; margin-top: 2px;">via Anthropic Subscription · No cost</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 13px; color: #686b82; margin-bottom: 4px;">📊 Reviewer</div>
+            <div style="border: 1px solid #dedee5; padding: 10px 12px; border-radius: 8px; font-size: 13px;">
+              <div style="font-weight: 500;">claude-sonnet-4-6</div>
+              <div style="font-size: 10px; color: #149e61; margin-top: 2px;">via Anthropic Subscription · No cost</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 13px; color: #686b82; margin-bottom: 4px;">🛡️ Risk Mgr</div>
+            <div style="border: 1px solid #dedee5; padding: 10px 12px; border-radius: 8px; font-size: 13px;">
+              <div style="font-weight: 500;">gemini-2.5-flash</div>
+              <div style="font-size: 10px; color: #149e61; margin-top: 2px;">via Google OAuth · Free tier</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Routing strategy -->
+        <div style="margin-top: 20px; padding: 14px; background: rgba(133,91,251,0.04); border-radius: 8px; border: 1px dashed #7132f5;">
+          <div style="font-size: 12px; text-transform: uppercase; color: #5741d8; font-weight: 700; margin-bottom: 6px;">Routing Strategy</div>
+          <div style="font-size: 13px; color: #101114;"><strong>Prefer Subscription</strong>: when an agent's selected model is available via subscription, use the subscription. Fall back to API key if quota exceeded.</div>
+          <div style="margin-top: 8px;"><span style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 500;">change strategy ▼</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 24px;">变化点</h3>
+<ul>
+  <li><strong>Tab 切换 API Key / Subscription</strong>：两栏并行展示</li>
+  <li><strong>Subscription 自动检测</strong>：Claude 从 <code>~/.claude/credentials.json</code> 读，Gemini 走 Google OAuth 一键登录</li>
+  <li><strong>"Auto" / "OAuth" 标签</strong>：清楚区分认证方式</li>
+  <li><strong>每个 agent 显示 "via 哪个 provider"</strong>：能看到这个 agent 现在在用 subscription 还是 API key，以及大致成本</li>
+  <li><strong>Routing Strategy</strong>：默认 "prefer subscription"（省钱），quota 用完自动 fallback API key</li>
+  <li><strong>实施工作量</strong>：相比之前 +4 个 subscription adapter，约 +8-12 task（每个 subscription provider 一个 adapter + auth flow + UI）</li>
+</ul>
+
+<p class="subtitle" style="margin-top: 16px;">看完告诉我：1) Subscription 列表对吗？(Claude / Gemini / Zhipu Coding / Kimi Code) 2) Routing strategy 默认 "prefer subscription" 同意吗？</p>

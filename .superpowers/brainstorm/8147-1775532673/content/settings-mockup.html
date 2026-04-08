@@ -1,0 +1,160 @@
+<h2>Settings 页面 mockup (kraken 风格)</h2>
+<p class="subtitle">4 个分区：LLM 配置 / 交易阈值 / 风控限制 / 待审建议</p>
+
+<div class="mockup">
+  <div class="mockup-header">桌面应用 — Settings 页面</div>
+  <div class="mockup-body" style="padding: 0; background: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #101114;">
+    <div style="display: flex; min-height: 700px;">
+      <!-- Left sidebar (same as Dashboard) -->
+      <div style="width: 220px; background: #fafafa; border-right: 1px solid #dedee5; padding: 24px 16px;">
+        <div style="font-weight: 700; font-size: 20px; letter-spacing: -0.5px; margin-bottom: 32px; color: #7132f5;">Polymarket Trader</div>
+        <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; margin-bottom: 12px; font-weight: 500;">Pages</div>
+        <div style="padding: 10px 12px; color: #686b82; margin-bottom: 4px;">📊 Dashboard</div>
+        <div style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 10px 12px; border-radius: 8px; font-weight: 500; margin-bottom: 4px;">⚙️ Settings <span style="background: #d63b3b; color: white; border-radius: 999px; padding: 1px 6px; font-size: 10px; margin-left: 6px;">2</span></div>
+        <div style="padding: 10px 12px; color: #686b82; margin-bottom: 4px;">📄 Reports</div>
+        <div style="padding: 10px 12px; color: #686b82; margin-bottom: 4px;">💬 Chat</div>
+        <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; margin: 24px 0 12px; font-weight: 500;">Employees</div>
+        <div style="padding: 8px 12px;"><span style="width: 8px; height: 8px; background: #149e61; border-radius: 50%; display: inline-block; margin-right: 8px;"></span>🧠 Analyzer</div>
+        <div style="padding: 8px 12px;"><span style="width: 8px; height: 8px; background: #149e61; border-radius: 50%; display: inline-block; margin-right: 8px;"></span>📊 Reviewer</div>
+        <div style="padding: 8px 12px;"><span style="width: 8px; height: 8px; background: #149e61; border-radius: 50%; display: inline-block; margin-right: 8px;"></span>🛡️ Risk Mgr</div>
+      </div>
+
+      <!-- Main content -->
+      <div style="flex: 1; padding: 32px; max-height: 700px; overflow-y: auto;">
+        <div style="font-size: 32px; font-weight: 700; letter-spacing: -1px; margin-bottom: 8px;">Settings</div>
+        <div style="font-size: 14px; color: #9497a9; margin-bottom: 32px;">Configure providers, thresholds, and review pending changes</div>
+
+        <!-- Section: LLM -->
+        <div style="background: white; border: 1px solid #dedee5; border-radius: 12px; padding: 24px; margin-bottom: 16px;">
+          <div style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">🤖 LLM Providers</div>
+          <div style="font-size: 13px; color: #9497a9; margin-bottom: 20px;">Configure API keys and per-agent model overrides</div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; margin-bottom: 20px;">
+            <div style="border: 2px solid #7132f5; padding: 12px; border-radius: 10px; background: rgba(133,91,251,0.04);">
+              <div style="font-weight: 600; margin-bottom: 4px;">Anthropic ✓</div>
+              <div style="font-size: 11px; color: #686b82;">sk-ant-...4f2a</div>
+              <div style="font-size: 11px; color: #149e61; margin-top: 4px;">● Connected</div>
+            </div>
+            <div style="border: 1px solid #dedee5; padding: 12px; border-radius: 10px;">
+              <div style="font-weight: 600; margin-bottom: 4px;">DeepSeek</div>
+              <div style="font-size: 11px; color: #9497a9;">Not configured</div>
+              <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 4px 10px; border-radius: 6px; border: none; font-size: 11px; margin-top: 6px; font-weight: 500;">Add key</button>
+            </div>
+            <div style="border: 1px solid #dedee5; padding: 12px; border-radius: 10px;">
+              <div style="font-weight: 600; margin-bottom: 4px;">Zhipu / Z.ai</div>
+              <div style="font-size: 11px; color: #9497a9;">Not configured</div>
+              <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 4px 10px; border-radius: 6px; border: none; font-size: 11px; margin-top: 6px; font-weight: 500;">Add key</button>
+            </div>
+            <div style="border: 1px solid #dedee5; padding: 12px; border-radius: 10px;">
+              <div style="font-weight: 600; margin-bottom: 4px;">OpenAI</div>
+              <div style="font-size: 11px; color: #9497a9;">Not configured</div>
+              <button style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 4px 10px; border-radius: 6px; border: none; font-size: 11px; margin-top: 6px; font-weight: 500;">Add key</button>
+            </div>
+          </div>
+
+          <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; font-weight: 500; margin-bottom: 8px;">Per-agent model</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+            <div>
+              <div style="font-size: 13px; color: #686b82; margin-bottom: 4px;">🧠 Analyzer</div>
+              <div style="border: 1px solid #dedee5; padding: 8px 12px; border-radius: 8px; font-size: 13px; display: flex; justify-content: space-between;">
+                <span>claude-opus-4-6</span><span style="color: #9497a9;">▼</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 13px; color: #686b82; margin-bottom: 4px;">📊 Reviewer</div>
+              <div style="border: 1px solid #dedee5; padding: 8px 12px; border-radius: 8px; font-size: 13px; display: flex; justify-content: space-between;">
+                <span>claude-sonnet-4-6</span><span style="color: #9497a9;">▼</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-size: 13px; color: #686b82; margin-bottom: 4px;">🛡️ Risk Mgr</div>
+              <div style="border: 1px solid #dedee5; padding: 8px 12px; border-radius: 8px; font-size: 13px; display: flex; justify-content: space-between;">
+                <span>claude-haiku-4-5</span><span style="color: #9497a9;">▼</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Trading thresholds -->
+        <div style="background: white; border: 1px solid #dedee5; border-radius: 12px; padding: 24px; margin-bottom: 16px;">
+          <div style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">⚡ Trading Thresholds</div>
+          <div style="font-size: 13px; color: #9497a9; margin-bottom: 20px;">When to trigger a signal</div>
+
+          <table style="width: 100%; font-size: 13px;">
+            <tr style="border-bottom: 1px solid #f0f0f5;"><td style="padding: 10px 0; color: #686b82;">Min trade size</td><td style="text-align: right; font-weight: 500;">$200</td><td style="text-align: right; width: 80px;"><span style="color: #7132f5; font-size: 12px;">edit</span></td></tr>
+            <tr style="border-bottom: 1px solid #f0f0f5;"><td style="padding: 10px 0; color: #686b82;">Min net flow (1m)</td><td style="text-align: right; font-weight: 500;">$3,000 <span style="background: rgba(20,158,97,0.16); color: #026b3f; padding: 2px 6px; border-radius: 4px; font-size: 10px; margin-left: 6px;">auto-applied</span></td><td style="text-align: right;"><span style="color: #7132f5; font-size: 12px;">edit</span></td></tr>
+            <tr style="border-bottom: 1px solid #f0f0f5;"><td style="padding: 10px 0; color: #686b82;">Min unique traders (1m)</td><td style="text-align: right; font-weight: 500;">3</td><td style="text-align: right;"><span style="color: #7132f5; font-size: 12px;">edit</span></td></tr>
+            <tr style="border-bottom: 1px solid #f0f0f5;"><td style="padding: 10px 0; color: #686b82;">Min price move (5m)</td><td style="text-align: right; font-weight: 500;">3.0%</td><td style="text-align: right;"><span style="color: #7132f5; font-size: 12px;">edit</span></td></tr>
+            <tr style="border-bottom: 1px solid #f0f0f5;"><td style="padding: 10px 0; color: #686b82;">Min liquidity</td><td style="text-align: right; font-weight: 500;">$5,000</td><td style="text-align: right;"><span style="color: #7132f5; font-size: 12px;">edit</span></td></tr>
+            <tr><td style="padding: 10px 0; color: #686b82;">Dead zone</td><td style="text-align: right; font-weight: 500;">[0.60, 0.85]</td><td style="text-align: right;"><span style="color: #9497a9; font-size: 12px;">locked</span></td></tr>
+          </table>
+        </div>
+
+        <!-- Section: Risk limits -->
+        <div style="background: white; border: 1px solid #dedee5; border-radius: 12px; padding: 24px; margin-bottom: 16px;">
+          <div style="font-size: 18px; font-weight: 600; margin-bottom: 4px;">🛡️ Risk Limits</div>
+          <div style="font-size: 13px; color: #9497a9; margin-bottom: 20px;">Hard caps on capital and exits</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 13px;">
+            <div>
+              <div style="color: #686b82;">Total capital</div><div style="font-weight: 600; font-size: 16px;">$10,000</div>
+            </div>
+            <div>
+              <div style="color: #686b82;">Max position size</div><div style="font-weight: 600; font-size: 16px;">$300</div>
+            </div>
+            <div>
+              <div style="color: #686b82;">Max single-trade loss</div><div style="font-weight: 600; font-size: 16px;">$50</div>
+            </div>
+            <div>
+              <div style="color: #686b82;">Max open positions</div><div style="font-weight: 600; font-size: 16px;">8</div>
+            </div>
+            <div>
+              <div style="color: #686b82;">Daily halt threshold</div><div style="font-weight: 600; font-size: 16px;">-2.0%</div>
+            </div>
+            <div>
+              <div style="color: #686b82;">Take profit / Stop loss</div><div style="font-weight: 600; font-size: 16px;">+10% / -7%</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Pending Proposals -->
+        <div style="background: white; border: 2px solid #7132f5; border-radius: 12px; padding: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <div style="font-size: 18px; font-weight: 600;">📝 Pending Filter Proposals (2)</div>
+            <div style="font-size: 12px; color: #9497a9;">From Reviewer · 2026-04-06</div>
+          </div>
+          <div style="font-size: 13px; color: #9497a9; margin-bottom: 16px;">Reviewer's data-driven suggestions awaiting your approval</div>
+
+          <div style="border: 1px solid #dedee5; border-radius: 10px; padding: 16px; margin-bottom: 12px;">
+            <div style="font-weight: 500;">Min unique traders (1m): <span style="text-decoration: line-through; color: #9497a9;">3</span> → <strong>4</strong></div>
+            <div style="font-size: 12px; color: #686b82; margin: 6px 0;">Bucket 0.40–0.60 win rate is 58% over 22 trades; tightening filter projected to lift to ~64%.</div>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button style="background: #7132f5; color: white; padding: 8px 14px; border-radius: 8px; border: none; font-size: 12px; font-weight: 500;">Approve</button>
+              <button style="background: rgba(148,151,169,0.08); color: #101114; padding: 8px 14px; border-radius: 8px; border: none; font-size: 12px; font-weight: 500;">Reject</button>
+              <button style="background: transparent; color: #686b82; padding: 8px 14px; border: none; font-size: 12px;">View details</button>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #dedee5; border-radius: 10px; padding: 16px;">
+            <div style="font-weight: 500;">Take profit %: <span style="text-decoration: line-through; color: #9497a9;">10%</span> → <strong>8%</strong></div>
+            <div style="font-size: 12px; color: #686b82; margin: 6px 0;">Past 30 trades show 70% of TP exits happen below +9%, leaving profit on table to time-stop instead.</div>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button style="background: #7132f5; color: white; padding: 8px 14px; border-radius: 8px; border: none; font-size: 12px; font-weight: 500;">Approve</button>
+              <button style="background: rgba(148,151,169,0.08); color: #101114; padding: 8px 14px; border-radius: 8px; border: none; font-size: 12px; font-weight: 500;">Reject</button>
+              <button style="background: transparent; color: #686b82; padding: 8px 14px; border: none; font-size: 12px;">View details</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 24px;">关键设计点</h3>
+<ul>
+  <li><strong>Settings tab 上的红点 "2"</strong>：提示你有 2 个 pending proposals 等审</li>
+  <li><strong>4 个 provider 卡片</strong>：当前激活的有紫框、未配置的有"Add key"按钮</li>
+  <li><strong>每个 agent 模型独立选</strong>：Analyzer 用 Opus、Reviewer 用 Sonnet、Risk Mgr 用 Haiku（默认值）</li>
+  <li><strong>Trading thresholds 表</strong>：每行可单独 edit，已被 auto-apply 的有绿色"auto-applied"标签</li>
+  <li><strong>死亡区间 [0.60, 0.85] 是 locked</strong>，不能改（spec §4.3 硬约束）</li>
+  <li><strong>Pending Proposals 框紫色边</strong>：每条提案有理由 + Approve/Reject/View details 按钮</li>
+</ul>

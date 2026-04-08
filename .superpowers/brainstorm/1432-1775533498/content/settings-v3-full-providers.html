@@ -1,0 +1,185 @@
+<h2>Settings v3 — 全量 Provider 集成</h2>
+<p class="subtitle">~24 个 provider，按认证方式分 3 组：API Key (16) / Subscription (7) / Local (1)</p>
+
+<div class="mockup">
+  <div class="mockup-header">Settings → LLM Providers (Full)</div>
+  <div class="mockup-body" style="padding: 0; background: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #101114;">
+    <div style="padding: 32px; max-height: 720px; overflow-y: auto;">
+
+      <div style="background: white; border: 1px solid #dedee5; border-radius: 12px; padding: 24px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px;">
+          <div style="font-size: 18px; font-weight: 600;">🤖 LLM Providers</div>
+          <div style="font-size: 12px; color: #149e61; font-weight: 500;">5 connected · 19 available</div>
+        </div>
+        <div style="font-size: 13px; color: #9497a9; margin-bottom: 20px;">All major providers from RivonClaw, organized by auth type</div>
+
+        <!-- Filter tabs -->
+        <div style="display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #dedee5;">
+          <div style="padding: 10px 14px; border-bottom: 2px solid #7132f5; color: #7132f5; font-weight: 600; font-size: 13px;">All (24)</div>
+          <div style="padding: 10px 14px; border-bottom: 2px solid transparent; color: #686b82; font-weight: 500; font-size: 13px;">API Key (16)</div>
+          <div style="padding: 10px 14px; border-bottom: 2px solid transparent; color: #686b82; font-weight: 500; font-size: 13px;">Subscription (7) <span style="background: #149e61; color: white; padding: 1px 6px; border-radius: 999px; font-size: 10px; margin-left: 4px;">3</span></div>
+          <div style="padding: 10px 14px; border-bottom: 2px solid transparent; color: #686b82; font-weight: 500; font-size: 13px;">Local (1)</div>
+          <div style="padding: 10px 14px; border-bottom: 2px solid transparent; color: #686b82; font-weight: 500; font-size: 13px;">Connected only</div>
+        </div>
+
+        <!-- API Key group -->
+        <div style="font-size: 11px; text-transform: uppercase; color: #9497a9; font-weight: 700; margin-bottom: 10px;">▾ API Key (16) — uses common OpenAI-compatible base adapter</div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 24px;">
+          <div style="border: 2px solid #7132f5; padding: 10px; border-radius: 10px; background: rgba(133,91,251,0.04);">
+            <div style="font-weight: 600; font-size: 12px;">Anthropic ✓</div><div style="font-size: 10px; color: #686b82;">sk-ant-...4f2a</div>
+          </div>
+          <div style="border: 2px solid #7132f5; padding: 10px; border-radius: 10px; background: rgba(133,91,251,0.04);">
+            <div style="font-weight: 600; font-size: 12px;">DeepSeek ✓</div><div style="font-size: 10px; color: #686b82;">sk-...8e21</div>
+          </div>
+          <div style="border: 2px solid #7132f5; padding: 10px; border-radius: 10px; background: rgba(133,91,251,0.04);">
+            <div style="font-weight: 600; font-size: 12px;">Zhipu / Z.ai ✓</div><div style="font-size: 10px; color: #686b82;">api-...c1a3</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">OpenAI</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Moonshot / Kimi</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Qwen</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Groq</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Mistral</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">xAI (Grok)</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">OpenRouter</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">MiniMax</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Venice AI</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Xiaomi MiMo</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Volcengine</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Bedrock</div><div style="font-size: 10px; color: #9497a9;">+ AWS auth</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">NVIDIA NIM</div><div style="font-size: 10px; color: #9497a9;">+ Add</div>
+          </div>
+        </div>
+
+        <!-- Subscription group -->
+        <div style="font-size: 11px; text-transform: uppercase; color: #9497a9; font-weight: 700; margin-bottom: 10px;">▾ Subscription / Coding Plans (7) — auto-detected from CLI when possible</div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 24px;">
+          <div style="border: 2px solid #149e61; padding: 10px; border-radius: 10px; background: rgba(20,158,97,0.04);">
+            <div style="font-weight: 600; font-size: 12px;">Claude (Sub) ✓</div><div style="font-size: 10px; color: #149e61;">Auto · Max plan · 4d left</div>
+          </div>
+          <div style="border: 2px solid #149e61; padding: 10px; border-radius: 10px; background: rgba(20,158,97,0.04);">
+            <div style="font-weight: 600; font-size: 12px;">Gemini (OAuth) ✓</div><div style="font-size: 10px; color: #149e61;">Free tier · 1000/day</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Zhipu Coding</div><div style="font-size: 10px; color: #9497a9;">→ Connect</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Qwen Coding</div><div style="font-size: 10px; color: #9497a9;">→ Connect</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Kimi Code</div><div style="font-size: 10px; color: #9497a9;">→ Connect</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">MiniMax Coding</div><div style="font-size: 10px; color: #9497a9;">→ Connect</div>
+          </div>
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Volcengine Coding</div><div style="font-size: 10px; color: #9497a9;">→ Connect</div>
+          </div>
+        </div>
+
+        <!-- Local group -->
+        <div style="font-size: 11px; text-transform: uppercase; color: #9497a9; font-weight: 700; margin-bottom: 10px;">▾ Local Models (1)</div>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 24px;">
+          <div style="border: 1px solid #dedee5; padding: 10px; border-radius: 10px;">
+            <div style="font-weight: 600; font-size: 12px;">Ollama</div><div style="font-size: 10px; color: #9497a9;">localhost:11434 · ✓ detected</div>
+            <div style="font-size: 10px; color: #686b82; margin-top: 2px;">qwen2.5:32b, deepseek-r1:14b</div>
+          </div>
+        </div>
+
+        <!-- Per-agent assignment -->
+        <div style="font-size: 11px; text-transform: uppercase; color: #9497a9; font-weight: 700; margin-bottom: 10px; border-top: 1px dashed #dedee5; padding-top: 16px;">Per-agent model assignment</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+          <div>
+            <div style="font-size: 12px; color: #686b82; margin-bottom: 4px;">🧠 Analyzer</div>
+            <div style="border: 1px solid #dedee5; padding: 10px 12px; border-radius: 8px;">
+              <div style="font-weight: 500; font-size: 13px;">claude-opus-4-6</div>
+              <div style="font-size: 10px; color: #149e61;">via Anthropic Sub · No cost</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 12px; color: #686b82; margin-bottom: 4px;">📊 Reviewer</div>
+            <div style="border: 1px solid #dedee5; padding: 10px 12px; border-radius: 8px;">
+              <div style="font-weight: 500; font-size: 13px;">glm-4.5</div>
+              <div style="font-size: 10px; color: #686b82;">via Zhipu API · ~$0.04/run</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size: 12px; color: #686b82; margin-bottom: 4px;">🛡️ Risk Mgr</div>
+            <div style="border: 1px solid #dedee5; padding: 10px 12px; border-radius: 8px;">
+              <div style="font-weight: 500; font-size: 13px;">gemini-2.5-flash</div>
+              <div style="font-size: 10px; color: #149e61;">via Google OAuth · Free</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Routing strategy -->
+        <div style="margin-top: 20px; padding: 14px; background: rgba(133,91,251,0.04); border-radius: 8px; border: 1px dashed #7132f5;">
+          <div style="font-size: 11px; text-transform: uppercase; color: #5741d8; font-weight: 700; margin-bottom: 6px;">Routing Strategy: Prefer Subscription</div>
+          <div style="font-size: 12px; color: #101114;">Use Subscription (Claude/Gemini/Zhipu Coding/etc.) when model is available there, else fall back to API key. Quota exhausted → next priority. Local Ollama as ultimate fallback.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 24px;">实施架构（不是 24 个适配器，是 6 个）</h3>
+<table style="width: 100%; font-size: 13px; border-collapse: collapse;">
+  <tr style="background: #fafafa;">
+    <th style="text-align: left; padding: 8px;">适配器</th>
+    <th style="text-align: left; padding: 8px;">覆盖 provider</th>
+    <th style="text-align: left; padding: 8px;">个数</th>
+  </tr>
+  <tr style="border-top: 1px solid #dedee5;">
+    <td style="padding: 8px;"><strong>OpenAICompatibleAdapter</strong> (基类)</td>
+    <td style="padding: 8px;">DeepSeek, Zhipu, Moonshot, Qwen, Groq, Mistral, xAI, OpenRouter, MiniMax, Venice AI, Xiaomi MiMo, Volcengine, NVIDIA NIM, OpenAI, Zhipu Coding, Qwen Coding, Kimi Code, MiniMax Coding, Volcengine Coding</td>
+    <td style="padding: 8px;">19</td>
+  </tr>
+  <tr style="border-top: 1px solid #dedee5;">
+    <td style="padding: 8px;"><strong>AnthropicAdapter</strong></td>
+    <td style="padding: 8px;">Anthropic API key + Anthropic Subscription (CLI credentials)</td>
+    <td style="padding: 8px;">2</td>
+  </tr>
+  <tr style="border-top: 1px solid #dedee5;">
+    <td style="padding: 8px;"><strong>GeminiAdapter</strong></td>
+    <td style="padding: 8px;">Gemini API key + Google OAuth (free tier)</td>
+    <td style="padding: 8px;">2</td>
+  </tr>
+  <tr style="border-top: 1px solid #dedee5;">
+    <td style="padding: 8px;"><strong>BedrockAdapter</strong></td>
+    <td style="padding: 8px;">AWS Bedrock (uses AWS SDK)</td>
+    <td style="padding: 8px;">1</td>
+  </tr>
+  <tr style="border-top: 1px solid #dedee5;">
+    <td style="padding: 8px;"><strong>OllamaAdapter</strong></td>
+    <td style="padding: 8px;">Local Ollama (HTTP)</td>
+    <td style="padding: 8px;">1</td>
+  </tr>
+</table>
+
+<p style="margin-top: 12px;"><strong>5 个适配器代码 → 25 个 provider 入口</strong>。OpenAI 兼容协议是当前业界事实标准，绝大多数 provider 直接套用同一份代码，只是 base URL 和模型列表不同。</p>
+
+<p class="subtitle" style="margin-top: 16px;">看完后两件事：1) 24 个 provider 都在吗？少哪个？2) Routing 默认 "Prefer Subscription" OK 吗？</p>

@@ -1,0 +1,129 @@
+<h2>Dashboard 页面 mockup (kraken 风格)</h2>
+<p class="subtitle">基于 Kraken DESIGN.md：紫色 #7132f5 主题、白底、12px 圆角、绿色 #149e61 表示盈利</p>
+
+<div class="mockup">
+  <div class="mockup-header">桌面应用布局 — 1280×800</div>
+  <div class="mockup-body" style="padding: 0; background: #ffffff; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #101114;">
+    <!-- Left sidebar -->
+    <div style="display: flex; min-height: 600px;">
+      <div style="width: 220px; background: #fafafa; border-right: 1px solid #dedee5; padding: 24px 16px;">
+        <div style="font-weight: 700; font-size: 20px; letter-spacing: -0.5px; margin-bottom: 32px; color: #7132f5;">Polymarket Trader</div>
+        <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; margin-bottom: 12px; font-weight: 500;">Pages</div>
+        <div style="background: rgba(133,91,251,0.16); color: #7132f5; padding: 10px 12px; border-radius: 8px; font-weight: 500; margin-bottom: 4px;">📊 Dashboard</div>
+        <div style="padding: 10px 12px; color: #686b82; font-weight: 400; margin-bottom: 4px;">⚙️ Settings</div>
+        <div style="padding: 10px 12px; color: #686b82; font-weight: 400; margin-bottom: 4px;">📄 Reports</div>
+        <div style="padding: 10px 12px; color: #686b82; font-weight: 400; margin-bottom: 4px;">💬 Chat</div>
+        <div style="font-size: 12px; text-transform: uppercase; color: #9497a9; margin: 24px 0 12px; font-weight: 500;">Employees</div>
+        <div style="padding: 8px 12px; color: #101114; display: flex; align-items: center; gap: 8px;"><span style="width: 8px; height: 8px; background: #149e61; border-radius: 50%;"></span>🧠 Analyzer</div>
+        <div style="padding: 8px 12px; color: #101114; display: flex; align-items: center; gap: 8px;"><span style="width: 8px; height: 8px; background: #149e61; border-radius: 50%;"></span>📊 Reviewer</div>
+        <div style="padding: 8px 12px; color: #101114; display: flex; align-items: center; gap: 8px;"><span style="width: 8px; height: 8px; background: #149e61; border-radius: 50%;"></span>🛡️ Risk Mgr</div>
+      </div>
+
+      <!-- Main content -->
+      <div style="flex: 1; padding: 32px;">
+        <!-- Page header -->
+        <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 24px;">
+          <div>
+            <div style="font-size: 32px; font-weight: 700; letter-spacing: -1px;">Dashboard</div>
+            <div style="font-size: 14px; color: #9497a9; margin-top: 4px;">Tue, Apr 6 2026 — 19:43 UTC</div>
+          </div>
+          <button style="background: #7132f5; color: white; padding: 13px 16px; border-radius: 12px; border: none; font-weight: 500; font-size: 14px;">Run Reviewer Now</button>
+        </div>
+
+        <!-- Coordinator brief banner -->
+        <div style="background: rgba(133,91,251,0.08); border-left: 3px solid #7132f5; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px;">
+          <div style="font-size: 12px; text-transform: uppercase; color: #5741d8; font-weight: 700; margin-bottom: 6px;">🛡️ Coordinator Brief — 1h ago</div>
+          <div style="font-size: 14px; color: #101114; line-height: 1.5;">7 triggers detected in last hour, 2 entered. PnL +$8.34. Net flow on US Election markets unusually elevated — consider tightening unique_traders_1m to 4.</div>
+        </div>
+
+        <!-- KPI cards -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px;">
+          <div style="background: white; border: 1px solid #dedee5; padding: 16px; border-radius: 12px;">
+            <div style="font-size: 12px; color: #9497a9; text-transform: uppercase; font-weight: 500;">Equity</div>
+            <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">$10,127.50</div>
+            <div style="font-size: 12px; color: #149e61; margin-top: 2px;">+$127.50 today</div>
+          </div>
+          <div style="background: white; border: 1px solid #dedee5; padding: 16px; border-radius: 12px;">
+            <div style="font-size: 12px; color: #9497a9; text-transform: uppercase; font-weight: 500;">Open positions</div>
+            <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">3 / 8</div>
+            <div style="font-size: 12px; color: #686b82; margin-top: 2px;">Exposure $342</div>
+          </div>
+          <div style="background: white; border: 1px solid #dedee5; padding: 16px; border-radius: 12px;">
+            <div style="font-size: 12px; color: #9497a9; text-transform: uppercase; font-weight: 500;">7d Win rate</div>
+            <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">62.5%</div>
+            <div style="font-size: 12px; color: #149e61; margin-top: 2px;">15 / 24 trades</div>
+          </div>
+          <div style="background: white; border: 1px solid #dedee5; padding: 16px; border-radius: 12px;">
+            <div style="font-size: 12px; color: #9497a9; text-transform: uppercase; font-weight: 500;">Drawdown</div>
+            <div style="font-size: 24px; font-weight: 700; margin-top: 4px;">-1.2%</div>
+            <div style="font-size: 12px; color: #686b82; margin-top: 2px;">From peak $10,250</div>
+          </div>
+        </div>
+
+        <!-- Open positions table -->
+        <div style="background: white; border: 1px solid #dedee5; border-radius: 12px; overflow: hidden;">
+          <div style="padding: 16px 20px; border-bottom: 1px solid #dedee5; display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 16px; font-weight: 600;">Open Positions</div>
+            <div style="display: flex; gap: 8px;">
+              <span style="background: rgba(20,158,97,0.16); color: #026b3f; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500;">No halt</span>
+            </div>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead>
+              <tr style="background: #fafafa; color: #686b82; text-transform: uppercase; font-size: 11px;">
+                <th style="text-align: left; padding: 12px 20px; font-weight: 500;">Market</th>
+                <th style="text-align: left; padding: 12px;">Side</th>
+                <th style="text-align: right; padding: 12px;">Entry</th>
+                <th style="text-align: right; padding: 12px;">Now</th>
+                <th style="text-align: right; padding: 12px;">Size</th>
+                <th style="text-align: right; padding: 12px;">PnL</th>
+                <th style="text-align: right; padding: 12px 20px;">Held</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-top: 1px solid #f0f0f5;">
+                <td style="padding: 14px 20px; font-weight: 500;">Trump approval > 50% by May</td>
+                <td style="padding: 14px;"><span style="background: rgba(20,158,97,0.16); color: #026b3f; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 500;">YES</span></td>
+                <td style="text-align: right; padding: 14px;">0.452</td>
+                <td style="text-align: right; padding: 14px;">0.481</td>
+                <td style="text-align: right; padding: 14px;">$125</td>
+                <td style="text-align: right; padding: 14px; color: #149e61; font-weight: 500;">+$8.02</td>
+                <td style="text-align: right; padding: 14px 20px; color: #686b82;">42m</td>
+              </tr>
+              <tr style="border-top: 1px solid #f0f0f5;">
+                <td style="padding: 14px 20px; font-weight: 500;">BTC > $100k by Apr 10</td>
+                <td style="padding: 14px;"><span style="background: rgba(20,158,97,0.16); color: #026b3f; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 500;">YES</span></td>
+                <td style="text-align: right; padding: 14px;">0.520</td>
+                <td style="text-align: right; padding: 14px;">0.508</td>
+                <td style="text-align: right; padding: 14px;">$108</td>
+                <td style="text-align: right; padding: 14px; color: #d63b3b; font-weight: 500;">-$2.49</td>
+                <td style="text-align: right; padding: 14px 20px; color: #686b82;">1h 18m</td>
+              </tr>
+              <tr style="border-top: 1px solid #f0f0f5;">
+                <td style="padding: 14px 20px; font-weight: 500;">Lakers vs Celtics tonight</td>
+                <td style="padding: 14px;"><span style="background: rgba(151,107,255,0.16); color: #5b1ecf; padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 500;">NO</span></td>
+                <td style="text-align: right; padding: 14px;">0.380</td>
+                <td style="text-align: right; padding: 14px;">0.395</td>
+                <td style="text-align: right; padding: 14px;">$109</td>
+                <td style="text-align: right; padding: 14px; color: #149e61; font-weight: 500;">+$3.81</td>
+                <td style="text-align: right; padding: 14px 20px; color: #686b82;">2h 04m</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 32px;">关键设计点</h3>
+<ul>
+  <li><strong>Sidebar 220px</strong>：4 个 page tab + 3 个员工状态指示（绿点 = 在线）</li>
+  <li><strong>Coordinator 简报横幅</strong>：每小时由 Risk Mgr/Coordinator 更新，自然语言一句话</li>
+  <li><strong>4 个 KPI 卡片</strong>：Equity / Open Positions / 7d Win Rate / Drawdown</li>
+  <li><strong>Open Positions 表</strong>：market 标题、side、入场价、当前价、仓位、PnL、持仓时长</li>
+  <li><strong>颜色语义</strong>：绿色 #149e61 = 盈利、红色 #d63b3b = 亏损、紫色 #5b1ecf = NO 仓位</li>
+  <li><strong>无分布图、无走势图</strong>（这一版还没加 Recharts，下一版可以加 PnL 曲线）</li>
+</ul>
+
+<p class="subtitle" style="margin-top: 24px;">看完之后告诉我：风格 OK 吗？布局对吗？要加 / 删 / 改什么？</p>

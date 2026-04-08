@@ -111,6 +111,12 @@ export async function bootEngine(): Promise<EngineContext> {
   const bus = createEventBus();
   const registry = createProviderRegistry();
 
+  try {
+    await loadStoredProviders(registry);
+  } catch (err) {
+    console.error("[lifecycle] failed to load stored providers:", err);
+  }
+
   const collector = createCollector({
     config,
     bus,
@@ -168,4 +174,73 @@ export async function shutdownEngine(): Promise<void> {
 /** Returns the active engine context, or null if not booted. */
 export function getEngineContext(): EngineContext | null {
   return activeContext;
+}
+
+/**
+ * Reconnect any LLM providers whose API keys are already stored in the
+ * secrets store. Each provider is wrapped in its own try/catch so that a
+ * single bad credential never blocks the rest of the app from booting.
+ */
+async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
+  const { createSecretStore } = await import("./secrets.js");
+  const {
+    createAnthropicProvider,
+    createOpenAICompatProvider,
+    createGeminiProvider,
+  } = await import("@pmt/llm");
+
+  const secrets = createSecretStore();
+  const keys = await secrets.listKeys();
+
+  for (const key of keys) {
+    if (!key.startsWith("provider_") || !key.endsWith("_apiKey")) continue;
+    const providerId = key.slice("provider_".length, -"_apiKey".length);
+    const apiKey = await secrets.get(key);
+    if (!apiKey) continue;
+
+    try {
+      let provider;
+      switch (providerId) {
+        case "anthropic_api":
+          provider = createAnthropicProvider({ mode: "api_key", apiKey });
+          break;
+        case "deepseek":
+          provider = createOpenAICompatProvider({
+            providerId: "deepseek" as never,
+            displayName: "DeepSeek",
+            apiKey,
+            baseUrl: "https://api.deepseek.com/v1",
+            defaultModels: [{ id: "deepseek-chat", contextWindow: 128000 }],
+          });
+          break;
+        case "zhipu":
+          provider = createOpenAICompatProvider({
+            providerId: "zhipu" as never,
+            displayName: "Zhipu",
+            apiKey,
+            baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+            defaultModels: [{ id: "glm-4.5", contextWindow: 128000 }],
+          });
+          break;
+        case "openai":
+          provider = createOpenAICompatProvider({
+            providerId: "openai" as never,
+            displayName: "OpenAI",
+            apiKey,
+            baseUrl: "https://api.openai.com/v1",
+            defaultModels: [{ id: "gpt-5", contextWindow: 200000 }],
+          });
+          break;
+        case "gemini_api":
+          provider = createGeminiProvider({ mode: "api_key", apiKey });
+          break;
+      }
+      if (provider) {
+        await provider.connect();
+        registry.register(provider);
+      }
+    } catch (err) {
+      console.error(`[lifecycle] failed to reconnect ${providerId}:`, err);
+    }
+  }
 }

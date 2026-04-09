@@ -1,0 +1,63 @@
+{
+  "_comment": "Polymarket Trader Configuration - Copy this file to config.json and customize",
+
+  "_section_1": "=== Trading Thresholds (触发条件) ===",
+  "minTradeUsdc": 200,
+  "minNetFlow1mUsdc": 3000,
+  "minUniqueTraders1m": 3,
+  "minPriceMove5m": 0.03,
+  "minLiquidityUsdc": 5000,
+  "minTimeToResolveSec": 1800,
+  "maxTimeToResolveSec": 21600,
+
+  "_section_2": "=== Dead Zone (死亡区间) ===",
+  "staticDeadZone": [0.60, 0.85],
+
+  "_section_3": "=== Bot Detection (机器人检测) ===",
+  "botBurstCount": 10,
+  "botBurstWindowMs": 1000,
+
+  "_section_4": "=== Large Order Exemption (大单豁免) ===",
+  "largeSingleTradeUsdc": 5000,
+  "largeNetFlowUsdc": 10000,
+
+  "_section_5": "=== Kelly Position Sizing (Kelly仓位计算) ===",
+  "kellyMultiplier": 0.25,
+  "minPositionUsdc": 50,
+  "maxPositionUsdc": 300,
+  "maxSingleTradeLossUsdc": 50,
+
+  "_section_6": "=== Portfolio Limits (组合限制) ===",
+  "maxTotalPositionUsdc": 2000,
+  "maxOpenPositions": 8,
+  "gasPerTradeUsdc": 0.20,
+
+  "_section_7": "=== Exit Rules (出场规则) ===",
+  "stopLossPctNormal": 0.07,
+  "stopLossPctLateStage": 0.03,
+  "lateStageThresholdSec": 1800,
+  "takeProfitPct": 0.10,
+  "maxHoldingSec": 14400,
+  "expirySafetyBufferSec": 300,
+
+  "_section_8": "=== Circuit Breakers (熔断器) ===",
+  "dailyLossHaltPct": 0.02,
+  "weeklyLossHaltPct": 0.04,
+  "killSwitchMinTrades": 10,
+  "killSwitchMaxWinRate": 0.45,
+  "totalDrawdownHaltPct": 0.10,
+
+  "_section_9": "=== Paper Trading (模拟交易) ===",
+  "paperSlippagePct": 0.005,
+
+  "_section_10": "=== WebSocket Endpoints ===",
+  "polymarketClobWsUrl": "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+  "polymarketActivityWsUrl": "wss://ws-live-data.polymarket.com",
+
+  "_section_11": "=== Market Filters (市场过滤) ===",
+  "marketBlacklistSubstrings": ["up or down"],
+
+  "_section_12": "=== LLM Configuration (LLM配置) ===",
+  "llmTimeoutMs": 30000,
+  "analyzerModel": "claude-opus-4"
+}

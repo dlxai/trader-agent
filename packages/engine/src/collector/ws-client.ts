@@ -1,11 +1,46 @@
 /**
  * Polymarket WebSocket client.
  *
- * Protocol reference: @polymarket/clob-client README + Polymarket docs at
- * https://docs.polymarket.com/developers/CLOB/websocket/wss-overview
+ * Uses the Real-Time Data WebSocket (RTDS) endpoint:
+ *   wss://ws-live-data.polymarket.com
  *
- * We subscribe to the "market" channel and parse trade events into the
- * plugin's internal Trade type. Reconnect uses exponential backoff.
+ * Protocol reference: https://github.com/Polymarket/real-time-data-client
+ *
+ * Subscription message format for trades/activity:
+ *   {
+ *     "action": "subscribe",
+ *     "subscriptions": [
+ *       {
+ *         "topic": "activity",
+ *         "type": "trades",
+ *         "filters": ""
+ *       }
+ *     ]
+ *   }
+ *
+ * Trade event format:
+ *   {
+ *     "connection_id": "...",
+ *     "timestamp": 1775653658045,
+ *     "topic": "activity",
+ *     "type": "trades",
+ *     "payload": {
+ *       "asset": "...",
+ *       "conditionId": "0x...",
+ *       "eventSlug": "...",
+ *       "slug": "...",
+ *       "outcome": "Yes" | "No",
+ *       "outcomeIndex": 0 | 1,
+ *       "price": 0.55,
+ *       "side": "BUY" | "SELL",
+ *       "size": 1000,
+ *       "timestamp": 1775653658,
+ *       "transactionHash": "0x...",
+ *       "proxyWallet": "0x...",
+ *       "name": "0x...",
+ *       "pseudonym": "..."
+ *     }
+ *   }
  */
 import WebSocket from "ws";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -25,15 +60,29 @@ export interface PolymarketWsClient {
   close(): void;
 }
 
-interface RawTradeEvent {
-  event_type: string;
-  market: string;
-  asset_id?: string;
-  price: string;
+interface RawTradePayload {
+  asset: string;
+  conditionId: string;
+  eventSlug: string;
+  slug: string;
+  outcome: string;
+  outcomeIndex: number;
+  price: number;
   side: string;
-  size: string;
-  taker?: string;
-  timestamp: string;
+  size: number;
+  timestamp: number;
+  transactionHash: string;
+  proxyWallet: string;
+  name: string;
+  pseudonym: string;
+}
+
+interface RawTradeEvent {
+  connection_id: string;
+  timestamp: number;
+  topic: string;
+  type: string;
+  payload: RawTradePayload;
 }
 
 export function createPolymarketWsClient(opts: WsClientOptions): PolymarketWsClient {
@@ -55,36 +104,61 @@ export function createPolymarketWsClient(opts: WsClientOptions): PolymarketWsCli
     return new Promise((resolve, reject) => {
       // Support proxy for WebSocket connection
       const proxyUrl = opts.proxyUrl || process.env.https_proxy || process.env.HTTPS_PROXY;
+      console.log(`[ws-client] Connecting to ${opts.url} ${proxyUrl ? 'via proxy ' + proxyUrl : 'directly'}`);
       const wsOptions: WebSocket.ClientOptions = proxyUrl
         ? { agent: new HttpsProxyAgent(proxyUrl) }
         : {};
       socket = new WebSocket(opts.url, wsOptions);
+      console.log(`[ws-client] WebSocket instance created`);
       socket.on("open", () => {
+        console.log(`[ws-client] WebSocket connected to ${opts.url}`);
         backoffMs = opts.reconnectInitialMs ?? 1000;
+        // Subscribe to activity/trades channel
+        const subscribeMsg = {
+          action: "subscribe",
+          subscriptions: [
+            {
+              topic: "activity",
+              type: "trades",
+              filters: ""
+            }
+          ]
+        };
+        socket?.send(JSON.stringify(subscribeMsg));
+        console.log(`[ws-client] Subscribed to activity/trades`);
         resolve();
       });
       socket.on("message", (data) => {
         try {
           const raw = JSON.parse(data.toString()) as RawTradeEvent;
-          if (raw.event_type !== "trade") return;
-          const side: "buy" | "sell" = raw.side.toLowerCase() === "buy" ? "buy" : "sell";
+          // Only process activity/trades events
+          if (raw.topic !== "activity" || raw.type !== "trades") {
+            return;
+          }
+
+          const payload = raw.payload;
+          const side: "buy" | "sell" = payload.side.toUpperCase() === "BUY" ? "buy" : "sell";
+
+          // Use conditionId as marketId (CLOB API accepts conditionId)
           opts.onTrade({
-            marketId: raw.market,
-            timestampMs: parseInt(raw.timestamp, 10),
-            address: raw.taker ?? "unknown",
-            sizeUsdc: parseFloat(raw.size),
+            marketId: payload.conditionId,
+            timestampMs: raw.timestamp,
+            address: payload.proxyWallet || payload.name,
+            sizeUsdc: payload.size,
             side,
-            price: parseFloat(raw.price),
+            price: payload.price,
           });
         } catch (err) {
-          opts.onError(err as Error);
+          // Ignore non-JSON or non-trade messages
         }
       });
       socket.on("error", (err) => {
+        console.error(`[ws-client] WebSocket error: ${err.message}`);
         opts.onError(err as Error);
         reject(err);
       });
-      socket.on("close", () => {
+      socket.on("close", (code, reason) => {
+        console.warn(`[ws-client] WebSocket closed: code=${code}, reason=${reason}`);
         scheduleReconnect();
       });
     });

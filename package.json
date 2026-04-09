@@ -13,6 +13,7 @@
     "postinstall": "electron-builder install-app-deps",
     "dev": "pnpm --filter @pmt/renderer dev",
     "start": "pnpm build && pnpm --filter @pmt/main start",
+    "start:mock": "pnpm build && set MOCK_DATA=true && pnpm --filter @pmt/main start",
     "start:openclaw": "set OPENCLAW_PLUGIN_MODE=true && pnpm build && pnpm --filter @pmt/main start",
     "electron:dev": "pnpm --filter @pmt/main electron:dev",
     "electron:dev:openclaw": "set OPENCLAW_PLUGIN_MODE=true && pnpm --filter @pmt/main electron:dev:win",

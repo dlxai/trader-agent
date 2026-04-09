@@ -15,6 +15,8 @@ describe("collector", () => {
       bus,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       wsClientFactory: () => ({ connect: vi.fn().mockResolvedValue(undefined), close: vi.fn() }) as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      executor: { onPriceTick: vi.fn(), openPositions: vi.fn().mockReturnValue([]) } as any,
       marketMetadataProvider: async (marketId: string) => ({
         marketId,
         marketTitle: "Test market",
@@ -26,6 +28,7 @@ describe("collector", () => {
 
     const now = Date.now();
     // Need 4 unique traders, net_flow >= 3000 in 1m, price move >= 3% in 5m, size >= $200 each
+    // Note: trade size must be >= minTradeUsdc (default $200)
     const trades = [
       { marketId: "m1", address: "a", sizeUsdc: 1200, side: "buy" as const, price: 0.50, timestampMs: now - 280_000 },
       { marketId: "m1", address: "b", sizeUsdc: 1200, side: "buy" as const, price: 0.52, timestampMs: now - 40_000 },
@@ -49,6 +52,8 @@ describe("collector", () => {
       bus,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       wsClientFactory: () => ({ connect: vi.fn().mockResolvedValue(undefined), close: vi.fn() }) as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      executor: { onPriceTick: vi.fn(), openPositions: vi.fn().mockReturnValue([]) } as any,
       marketMetadataProvider: async (marketId) => ({
         marketId,
         marketTitle: "Test market",
@@ -80,6 +85,8 @@ describe("collector", () => {
       bus,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       wsClientFactory: () => ({ connect: vi.fn().mockResolvedValue(undefined), close: vi.fn() }) as any,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      executor: { onPriceTick: vi.fn(), openPositions: vi.fn().mockReturnValue([]) } as any,
       marketMetadataProvider: async (marketId) => ({
         marketId,
         marketTitle: "Test market",

@@ -21,12 +21,20 @@ import {
   createPortfolioStateRepo,
   loadConfig,
   createPolymarketWsClient,
+  createClobWsClient,
   createPolymarketMarketMetadataProvider,
+  setAnalyzerCallback,
+  getAnalyzerCallback,
+  getEventBusForExternal,
+  packContext,
+  parseVerdict,
   type EventBus,
   type Collector,
   type Executor,
   type TraderConfig,
   type MarketMetadata,
+  type TriggerEvent,
+  type VerdictEvent,
 } from "@pmt/engine";
 import { createProviderRegistry, type ProviderRegistry } from "@pmt/llm";
 
@@ -42,6 +50,7 @@ export interface EngineContext {
   collector: Collector;
   executor: Executor;
   registry: ProviderRegistry;
+  portfolioRepo: ReturnType<typeof createPortfolioStateRepo>;
 }
 
 let activeContext: EngineContext | null = null;
@@ -77,7 +86,7 @@ function resolveDataDir(): string {
  * Falls back to placeholder if API call fails.
  */
 function createRealMarketMetadataProvider(proxyUrl?: string) {
-  return createPolymarketMarketMetadataProvider({ proxyUrl });
+  return createPolymarketMarketMetadataProvider(proxyUrl ? { proxyUrl } : undefined);
 }
 
 /**
@@ -90,7 +99,9 @@ export async function bootEngine(): Promise<EngineContext> {
   const dbPath = join(dataDir, "data.db");
   const db = openDatabase(dbPath);
 
-  const config = loadConfig(undefined);
+  // Load base config then apply database overrides
+  let config = loadConfig(undefined);
+  config = applyDatabaseConfigOverrides(db, config);
   const signalRepo = createSignalLogRepo(db);
   const portfolioRepo = createPortfolioStateRepo(db);
   const bus = createEventBus();
@@ -102,34 +113,33 @@ export async function bootEngine(): Promise<EngineContext> {
     console.error("[lifecycle] failed to load stored providers:", err);
   }
 
-  // Load proxy configuration from database
-  let proxyUrl: string | undefined;
+  // Load proxy configuration from database or environment
+  let proxyUrl: string | undefined = process.env.https_proxy || process.env.HTTPS_PROXY;
+  if (proxyUrl) {
+    console.log(`[lifecycle] Using proxy from environment: ${proxyUrl}`);
+  }
+
+  // Also check database for proxy config (can override env)
   try {
     const proxyRow = db.prepare("SELECT value FROM filter_config WHERE key = 'proxy_config'").get() as { value: string } | undefined;
     if (proxyRow) {
       const proxyConfig = JSON.parse(proxyRow.value) as { enabled: boolean; httpsProxy: string };
       if (proxyConfig.enabled && proxyConfig.httpsProxy) {
         proxyUrl = proxyConfig.httpsProxy;
-        console.log(`[lifecycle] Using proxy: ${proxyUrl}`);
+        console.log(`[lifecycle] Using proxy from database: ${proxyUrl}`);
       }
     }
   } catch {
     // Ignore proxy config errors
   }
 
-  const collector = createCollector({
-    config,
-    bus,
-    wsClientFactory: (onTrade) =>
-      createPolymarketWsClient({
-        url: config.polymarketWsUrl,
-        onTrade,
-        onError: (err) => noopLogger.error(`[ws] ${err.message}`),
-        proxyUrl,
-      }),
-    marketMetadataProvider: createRealMarketMetadataProvider(proxyUrl),
-    logger: noopLogger,
-  });
+  // No default proxy - must be configured explicitly
+  if (!proxyUrl) {
+    console.log(`[lifecycle] No proxy configured, connecting directly`);
+  }
+
+  // Set proxy URL in config for collector HTTP fallback
+  config.proxyUrl = proxyUrl;
 
   const executor = createExecutor({
     config,
@@ -137,6 +147,94 @@ export async function bootEngine(): Promise<EngineContext> {
     signalRepo,
     portfolioRepo,
     logger: noopLogger,
+  });
+
+  const collector = createCollector({
+    config,
+    bus,
+    executor,
+    wsClientFactory: (onTrade) =>
+      createPolymarketWsClient({
+        // Use Activity WebSocket (RTDS) for trade activity stream
+        url: config.polymarketActivityWsUrl,
+        onTrade,
+        onError: (err) => console.error(`[ws-activity] ${err.message}`),
+        ...(proxyUrl ? { proxyUrl } : {}),
+      }),
+    // Temporarily disable CLOB WebSocket due to connection issues
+    // clobWsClientFactory: (onPriceUpdate) =>
+    //   createClobWsClient({
+    //     url: config.polymarketClobWsUrl,
+    //     onPriceUpdate,
+    //     onError: (err) => console.error(`[ws-clob] ${err.message}`),
+    //     ...(proxyUrl ? { proxyUrl } : {}),
+    //   }),
+    marketMetadataProvider: createRealMarketMetadataProvider(proxyUrl),
+    logger: console,
+  });
+
+  // Set up Analyzer LLM integration
+  setAnalyzerCallback(async (trigger: TriggerEvent): Promise<VerdictEvent | null> => {
+    const assigned = registry.getProviderForAgent("analyzer");
+    if (!assigned) {
+      console.warn("[lifecycle] No LLM provider available for analyzer");
+      return null;
+    }
+
+    try {
+      const prompt = packContext(trigger);
+      const response = await assigned.provider.chat({
+        model: assigned.modelId,
+        messages: [
+          { role: "system", content: getAnalyzerSystemPrompt() },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        maxTokens: 500,
+      });
+
+      if (!response) return null;
+
+      const parsed = parseVerdict(response.content);
+      
+      const verdictEvent: VerdictEvent = {
+        type: "verdict",
+        trigger,
+        verdict: parsed.verdict,
+        confidence: parsed.confidence,
+        reasoning: parsed.reasoning,
+        llm_direction: parsed.direction,
+      };
+
+      return verdictEvent;
+    } catch (err) {
+      console.error("[lifecycle] Analyzer LLM error:", err);
+      return null;
+    }
+  });
+
+  // Connect EventBus flow: Trigger -> Analyzer -> Verdict -> Executor
+  // Step 1: Subscribe to Triggers, send to Analyzer
+  bus.onTrigger(async (trigger) => {
+    const analyzerCb = getAnalyzerCallback();
+    if (!analyzerCb) {
+      console.warn("[lifecycle] No analyzer callback registered");
+      return;
+    }
+    try {
+      const verdict = await analyzerCb(trigger);
+      if (verdict) {
+        bus.publishVerdict(verdict);
+        console.log(`[lifecycle] Analyzer verdict: ${verdict.verdict} for ${trigger.market_id}`);
+      }
+    } catch (err) {
+      console.error("[lifecycle] Analyzer error:", err);
+    }
+  });
+
+  // Step 2: Subscribe to Verdicts, send to Executor
+  bus.onVerdict((verdict) => {
+    executor.handleVerdict(verdict);
   });
 
   activeContext = {
@@ -147,8 +245,38 @@ export async function bootEngine(): Promise<EngineContext> {
     collector,
     executor,
     registry,
+    portfolioRepo,
   };
   return activeContext;
+}
+
+function getAnalyzerSystemPrompt(): string {
+  return `You are the Polymarket Analyzer. Your job is to assess trading signals.
+
+Look for red flags (lean toward noise):
+- Unique traders < 3 with no large order exemption -> likely bots
+- Price move < 3% over 5m -> insufficient conviction  
+- Liquidity < $5000 -> slippage will eat profit
+- Market title contains gambling templates
+
+Look for green flags (lean toward real_signal):
+- Net flow > $5000 with 5+ unique traders -> broad participation
+- Price move aligned with net flow direction -> coherent move
+- Resolving in hours, not weeks -> event-driven window
+- Price in middle range (0.25-0.60) -> asymmetric payoff
+
+Hard constraints:
+- NEVER suggest trading in dead zone [0.60, 0.85]
+- Confidence is for audit only, not a gate
+- Respond with JSON only
+
+Output format:
+{
+  "verdict": "real_signal" | "noise" | "uncertain",
+  "direction": "buy_yes" | "buy_no", 
+  "confidence": 0.0 to 1.0,
+  "reasoning": "brief explanation"
+}`;
 }
 
 /**
@@ -175,6 +303,47 @@ export async function shutdownEngine(): Promise<void> {
 /** Returns the active engine context, or null if not booted. */
 export function getEngineContext(): EngineContext | null {
   return activeContext;
+}
+
+/**
+ * Apply configuration overrides from the database filter_config table.
+ * This allows runtime configuration changes via the desktop UI.
+ */
+function applyDatabaseConfigOverrides(db: EngineDatabase, config: TraderConfig): TraderConfig {
+  try {
+    const rows = db.prepare("SELECT key, value FROM filter_config").all() as Array<{ key: string; value: string }>;
+    const overrides: Record<string, unknown> = {};
+
+    for (const row of rows) {
+      try {
+        overrides[row.key] = JSON.parse(row.value);
+      } catch {
+        overrides[row.key] = row.value;
+      }
+    }
+
+    // Map database keys to config fields
+    if (overrides.minTradeUsdc !== undefined) config.minTradeUsdc = Number(overrides.minTradeUsdc);
+    if (overrides.minNetFlow1mUsdc !== undefined) config.minNetFlow1mUsdc = Number(overrides.minNetFlow1mUsdc);
+    if (overrides.minUniqueTraders1m !== undefined) config.minUniqueTraders1m = Number(overrides.minUniqueTraders1m);
+    if (overrides.minPriceMove5m !== undefined) config.minPriceMove5m = Number(overrides.minPriceMove5m);
+    if (overrides.minLiquidityUsdc !== undefined) config.minLiquidityUsdc = Number(overrides.minLiquidityUsdc);
+    if (overrides.staticDeadZoneMin !== undefined && overrides.staticDeadZoneMax !== undefined) {
+      config.staticDeadZone = [Number(overrides.staticDeadZoneMin), Number(overrides.staticDeadZoneMax)];
+    }
+    if (overrides.maxTotalPositionUsdc !== undefined) config.maxTotalPositionUsdc = Number(overrides.maxTotalPositionUsdc);
+    if (overrides.maxPositionUsdc !== undefined) config.maxPositionUsdc = Number(overrides.maxPositionUsdc);
+    if (overrides.maxSingleTradeLossUsdc !== undefined) config.maxSingleTradeLossUsdc = Number(overrides.maxSingleTradeLossUsdc);
+    if (overrides.maxOpenPositions !== undefined) config.maxOpenPositions = Number(overrides.maxOpenPositions);
+    if (overrides.dailyLossHaltPct !== undefined) config.dailyLossHaltPct = Number(overrides.dailyLossHaltPct);
+    if (overrides.takeProfitPct !== undefined) config.takeProfitPct = Number(overrides.takeProfitPct);
+    if (overrides.stopLossPctNormal !== undefined) config.stopLossPctNormal = Number(overrides.stopLossPctNormal);
+
+    console.log("[lifecycle] Applied", rows.length, "config overrides from database");
+  } catch (err) {
+    console.error("[lifecycle] Failed to load config overrides from database:", err);
+  }
+  return config;
 }
 
 /**
@@ -234,6 +403,51 @@ async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
           break;
         case "gemini_api":
           provider = createGeminiProvider({ mode: "api_key", apiKey });
+          break;
+        case "moonshot":
+          provider = createOpenAICompatProvider({
+            providerId: "moonshot" as never,
+            displayName: "Moonshot",
+            apiKey,
+            baseUrl: "https://api.moonshot.cn/v1",
+            defaultModels: [{ id: "moonshot-v1-8k", contextWindow: 8192 }],
+          });
+          break;
+        case "qwen":
+          provider = createOpenAICompatProvider({
+            providerId: "qwen" as never,
+            displayName: "Qwen",
+            apiKey,
+            baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            defaultModels: [{ id: "qwen-max", contextWindow: 128000 }],
+          });
+          break;
+        case "groq":
+          provider = createOpenAICompatProvider({
+            providerId: "groq" as never,
+            displayName: "Groq",
+            apiKey,
+            baseUrl: "https://api.groq.com/openai/v1",
+            defaultModels: [{ id: "llama-3.3-70b-versatile", contextWindow: 128000 }],
+          });
+          break;
+        case "mistral":
+          provider = createOpenAICompatProvider({
+            providerId: "mistral" as never,
+            displayName: "Mistral",
+            apiKey,
+            baseUrl: "https://api.mistral.ai/v1",
+            defaultModels: [{ id: "mistral-large-latest", contextWindow: 128000 }],
+          });
+          break;
+        case "xai":
+          provider = createOpenAICompatProvider({
+            providerId: "xai" as never,
+            displayName: "xAI",
+            apiKey,
+            baseUrl: "https://api.x.ai/v1",
+            defaultModels: [{ id: "grok-2", contextWindow: 128000 }],
+          });
           break;
       }
       if (provider) {

@@ -5,8 +5,8 @@ export interface TraderConfig {
   minUniqueTraders1m: number;       // 3
   minPriceMove5m: number;           // 0.03
   minLiquidityUsdc: number;         // 5000
-  minTimeToResolveSec: number;      // 1800
-  maxTimeToResolveSec: number;      // 259200
+  minTimeToResolveSec: number;      // 1800 (30 minutes)
+  maxTimeToResolveSec: number;      // 21600 (6 hours)
   // Dead zone (§4.3)
   staticDeadZone: [number, number]; // [0.60, 0.85]
   // Bot detection (§4.2)
@@ -40,8 +40,14 @@ export interface TraderConfig {
   // Paper trading (§9)
   paperSlippagePct: number;         // 0.005
   // Polymarket (§3)
-  polymarketWsUrl: string;          // wss://ws-subscriptions-clob.polymarket.com/ws/
+  // CLOB Market WebSocket - for orderbook/price subscriptions (持仓价格)
+  polymarketClobWsUrl: string;      // wss://ws-subscriptions-clob.polymarket.com/ws/market
+  // RTDS WebSocket - for trade activity stream (交易活动流)
+  polymarketActivityWsUrl: string;  // wss://ws-live-data.polymarket.com
   marketBlacklistSubstrings: string[]; // ["up or down"]
+  // Proxy configuration
+  proxyUrl?: string;                // e.g., http://127.0.0.1:7890
   // LLM (§7.1 Analyzer)
   llmTimeoutMs: number;             // 30000
+  analyzerModel?: string;           // Model for Analyzer agent (default: claude-opus-4)
 }

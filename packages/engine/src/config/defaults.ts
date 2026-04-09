@@ -6,8 +6,8 @@ export const DEFAULT_CONFIG: TraderConfig = {
   minUniqueTraders1m: 3,
   minPriceMove5m: 0.03,
   minLiquidityUsdc: 5000,
-  minTimeToResolveSec: 1800,
-  maxTimeToResolveSec: 259_200,
+  minTimeToResolveSec: 1800,       // 30 minutes
+  maxTimeToResolveSec: 21600,      // 6 hours
   staticDeadZone: [0.60, 0.85],
   botBurstCount: 10,
   botBurstWindowMs: 1000,
@@ -32,7 +32,14 @@ export const DEFAULT_CONFIG: TraderConfig = {
   killSwitchMaxWinRate: 0.45,
   totalDrawdownHaltPct: 0.10,
   paperSlippagePct: 0.005,
-  polymarketWsUrl: "wss://ws-subscriptions-clob.polymarket.com/ws/",
+  // CLOB Market WebSocket for orderbook/price data (持仓价格订阅)
+  // Endpoint: wss://ws-subscriptions-clob.polymarket.com/ws/market
+  polymarketClobWsUrl: "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+  // RTDS WebSocket for trade activity stream (交易活动流)
+  // Endpoint: wss://ws-live-data.polymarket.com
+  polymarketActivityWsUrl: "wss://ws-live-data.polymarket.com",
   marketBlacklistSubstrings: ["up or down"],
   llmTimeoutMs: 30_000,
+  // Analyzer LLM model (default to Claude Opus for best reasoning)
+  analyzerModel: "claude-opus-4",
 };

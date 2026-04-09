@@ -8,6 +8,7 @@ export interface ProviderCardProps {
   authDetail?: string;
   models?: string[];
   onConnect?: () => void;
+  onDisconnect?: () => void;
 }
 
 export function ProviderCard({
@@ -17,6 +18,7 @@ export function ProviderCard({
   authDetail,
   models,
   onConnect,
+  onDisconnect,
 }: ProviderCardProps) {
   const borderColor = isConnected
     ? authType === "cli_credential" || authType === "oauth"
@@ -110,6 +112,25 @@ export function ProviderCard({
             : authType === "cli_credential"
               ? " (CLI)"
               : " key"}
+        </button>
+      )}
+      {isConnected && onDisconnect && (
+        <button
+          type="button"
+          onClick={onDisconnect}
+          style={{
+            background: "transparent",
+            color: theme.colors.coolGray,
+            padding: "5px 12px",
+            borderRadius: 6,
+            fontSize: 11,
+            marginTop: 8,
+            fontWeight: theme.font.weights.medium,
+            border: `1px solid ${theme.colors.borderGray}`,
+            cursor: "pointer",
+          }}
+        >
+          Disconnect
         </button>
       )}
     </div>

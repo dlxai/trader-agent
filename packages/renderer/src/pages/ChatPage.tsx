@@ -16,10 +16,11 @@ interface AgentMeta {
   model: string;
 }
 
-const MOCK_AGENTS: readonly AgentMeta[] = [
-  { id: "analyzer", icon: "\u{1F9E0}", name: "Analyzer", model: "claude-opus-4-6" },
-  { id: "reviewer", icon: "\u{1F4CA}", name: "Reviewer", model: "claude-sonnet-4-6" },
-  { id: "risk_manager", icon: "\u{1F6E1}\uFE0F", name: "Risk Manager", model: "gemini-2.5-flash" },
+// Agent metadata - static config, model loaded from backend
+const AGENTS_CONFIG: readonly AgentMeta[] = [
+  { id: "analyzer", icon: "\u{1F9E0}", name: "Analyzer", model: "Loading..." },
+  { id: "reviewer", icon: "\u{1F4CA}", name: "Reviewer", model: "Loading..." },
+  { id: "risk_manager", icon: "\u{1F6E1}\uFE0F", name: "Risk Manager", model: "Loading..." },
 ] as const;
 
 type AgentFilter = "all" | AgentId;
@@ -133,7 +134,7 @@ const allTabStyle = (isActive: boolean): React.CSSProperties => ({
 });
 
 function getAgentMeta(id: AgentId): AgentMeta {
-  const match = MOCK_AGENTS.find((a) => a.id === id);
+  const match = AGENTS_CONFIG.find((a) => a.id === id);
   if (match === undefined) {
     throw new Error(`Unknown agent id: ${id}`);
   }
@@ -172,7 +173,7 @@ export function ChatPage() {
 
   const activeModel =
     filter === "all"
-      ? MOCK_AGENTS.map((a) => a.model).join(" \u00B7 ")
+      ? AGENTS_CONFIG.map((a) => a.model).join(" \u00B7 ")
       : getAgentMeta(filter).model;
 
   // Check if any agent is currently streaming
@@ -229,7 +230,7 @@ export function ChatPage() {
             >
               All
             </button>
-            {MOCK_AGENTS.map((agent) => (
+            {AGENTS_CONFIG.map((agent) => (
               <EmployeeTab
                 key={agent.id}
                 icon={agent.icon}

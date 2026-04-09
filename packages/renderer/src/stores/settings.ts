@@ -54,50 +54,37 @@ interface SettingsState {
   loaded: boolean;
   refresh: () => Promise<void>;
   removeProposalLocally: (id: number) => void;
+  updateThreshold: (key: keyof Thresholds, value: number) => Promise<void>;
+  updateRiskLimit: (key: keyof RiskLimits, value: number) => Promise<void>;
+  setAgentModel: (agentId: "analyzer" | "reviewer" | "risk_manager", providerId: string, modelId: string) => Promise<void>;
+  connectProvider: (providerId: string, credentials: { apiKey?: string; baseUrl?: string }) => Promise<void>;
+  disconnectProvider: (providerId: string) => Promise<void>;
 }
 
-// Initial state seeded with M4 mock values so dev-mode (non-Electron) rendering
-// and existing jsdom tests continue to show meaningful data. When running
-// inside Electron, refresh() overwrites providers/pendingProposals with live
-// IPC data. Thresholds/riskLimits remain mock until the config IPC is wired.
+// All available providers - shown in UI even when not connected
 const INITIAL_PROVIDERS: ProviderInfoUI[] = [
-  {
-    id: "anthropic_api",
-    name: "Anthropic",
-    authType: "api_key",
-    isConnected: true,
-    authDetail: "sk-ant-...4f2a",
-    models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
-  },
+  // API Key providers
+  { id: "anthropic_api", name: "Anthropic", authType: "api_key", isConnected: false },
+  { id: "openai", name: "OpenAI", authType: "api_key", isConnected: false },
   { id: "deepseek", name: "DeepSeek", authType: "api_key", isConnected: false },
   { id: "zhipu", name: "Zhipu / Z.ai", authType: "api_key", isConnected: false },
-  { id: "openai", name: "OpenAI", authType: "api_key", isConnected: false },
-  {
-    id: "anthropic_subscription",
-    name: "Claude (Sub)",
-    authType: "cli_credential",
-    isConnected: true,
-    authDetail: "Auto \u00B7 Max plan \u00B7 4d left",
-  },
-  {
-    id: "gemini_oauth",
-    name: "Gemini (OAuth)",
-    authType: "oauth",
-    isConnected: true,
-    authDetail: "Free tier \u00B7 1000/day",
-  },
+  { id: "gemini_api", name: "Gemini", authType: "api_key", isConnected: false },
+  { id: "moonshot", name: "Moonshot", authType: "api_key", isConnected: false },
+  { id: "qwen", name: "Qwen", authType: "api_key", isConnected: false },
+  { id: "groq", name: "Groq", authType: "api_key", isConnected: false },
+  { id: "mistral", name: "Mistral", authType: "api_key", isConnected: false },
+  { id: "xai", name: "xAI", authType: "api_key", isConnected: false },
+  // Local/CLI providers
+  { id: "ollama", name: "Ollama", authType: "cli_credential", isConnected: false },
 ];
 
 const INITIAL_AGENT_MODELS: Record<
   "analyzer" | "reviewer" | "risk_manager",
   AgentAssignment
 > = {
-  analyzer: { providerId: "anthropic_subscription", modelId: "claude-opus-4-6" },
-  reviewer: {
-    providerId: "anthropic_subscription",
-    modelId: "claude-sonnet-4-6",
-  },
-  risk_manager: { providerId: "gemini_oauth", modelId: "gemini-2.5-flash" },
+  analyzer: { providerId: "", modelId: "" },
+  reviewer: { providerId: "", modelId: "" },
+  risk_manager: { providerId: "", modelId: "" },
 };
 
 const INITIAL_THRESHOLDS: Thresholds = {
@@ -120,27 +107,7 @@ const INITIAL_RISK_LIMITS: RiskLimits = {
   stopLossPct: 0.07,
 };
 
-const INITIAL_PROPOSALS: PendingProposal[] = [
-  {
-    id: 1,
-    field: "min_unique_traders_1m",
-    oldValue: "3",
-    proposedValue: "4",
-    rationale:
-      "Bucket 0.40-0.60 win rate is 58% over 22 trades; tightening filter projected to lift to ~64%.",
-    sampleCount: 22,
-    expectedDeltaWinrate: 0.06,
-  },
-  {
-    id: 2,
-    field: "take_profit_pct",
-    oldValue: "0.10",
-    proposedValue: "0.08",
-    rationale: "Past 30 trades show 70% of TP exits happen below +9%.",
-    sampleCount: 30,
-    expectedDeltaWinrate: 0.04,
-  },
-];
+const INITIAL_PROPOSALS: PendingProposal[] = [];
 
 export const useSettings = create<SettingsState>((set) => ({
   providers: INITIAL_PROVIDERS,
@@ -152,19 +119,38 @@ export const useSettings = create<SettingsState>((set) => ({
 
   refresh: async () => {
     if (!isElectron()) return;
-    const [providers, proposals] = await Promise.all([
+    const [providers, proposals, config] = await Promise.all([
       pmt.listProviders(),
       pmt.getPendingProposals(),
       pmt.getConfig(),
     ]);
-    set({
-      providers: providers.map((p) => ({
-        id: p.providerId,
-        name: p.displayName,
-        authType: p.authType,
-        isConnected: p.isConnected,
-        models: p.models.map((m) => m.id),
-      })),
+
+    // Merge connected providers with initial provider list
+    const connectedProviderMap = new Map(
+      providers.map((p) => [
+        p.providerId,
+        {
+          id: p.providerId,
+          name: p.displayName,
+          authType: p.authType,
+          isConnected: p.isConnected,
+          models: p.models.map((m) => m.id),
+        },
+      ])
+    );
+
+    // Merge: use connected provider data if available, otherwise use initial data
+    const mergedProviders = INITIAL_PROVIDERS.map((initial) => {
+      const connected = connectedProviderMap.get(initial.id);
+      if (connected) {
+        return connected;
+      }
+      return initial;
+    });
+
+    // Parse config and update thresholds/riskLimits if available
+    const updates: Partial<SettingsState> = {
+      providers: mergedProviders,
       pendingProposals: proposals.map((p) => ({
         id: p.proposal_id,
         field: p.field,
@@ -175,11 +161,115 @@ export const useSettings = create<SettingsState>((set) => ({
         expectedDeltaWinrate: p.expected_delta_winrate ?? 0,
       })),
       loaded: true,
-    });
+    };
+
+    // Update thresholds from config if available
+    if (config && typeof config === "object") {
+      const cfg = config as Record<string, unknown>;
+      if (cfg.minTradeUsdc !== undefined) {
+        updates.thresholds = { ...INITIAL_THRESHOLDS, minTradeUsdc: Number(cfg.minTradeUsdc) };
+      }
+      if (cfg.minNetFlow1m !== undefined) {
+        updates.thresholds = { ...(updates.thresholds || INITIAL_THRESHOLDS), minNetFlow1m: Number(cfg.minNetFlow1m) };
+      }
+      if (cfg.minUniqueTraders1m !== undefined) {
+        updates.thresholds = { ...(updates.thresholds || INITIAL_THRESHOLDS), minUniqueTraders1m: Number(cfg.minUniqueTraders1m) };
+      }
+      if (cfg.minPriceMove5m !== undefined) {
+        updates.thresholds = { ...(updates.thresholds || INITIAL_THRESHOLDS), minPriceMove5m: Number(cfg.minPriceMove5m) };
+      }
+      if (cfg.minLiquidity !== undefined) {
+        updates.thresholds = { ...(updates.thresholds || INITIAL_THRESHOLDS), minLiquidity: Number(cfg.minLiquidity) };
+      }
+      if (cfg.deadZoneMin !== undefined) {
+        updates.thresholds = { ...(updates.thresholds || INITIAL_THRESHOLDS), deadZoneMin: Number(cfg.deadZoneMin) };
+      }
+      if (cfg.deadZoneMax !== undefined) {
+        updates.thresholds = { ...(updates.thresholds || INITIAL_THRESHOLDS), deadZoneMax: Number(cfg.deadZoneMax) };
+      }
+
+      // Update risk limits from config
+      if (cfg.totalCapital !== undefined) {
+        updates.riskLimits = { ...INITIAL_RISK_LIMITS, totalCapital: Number(cfg.totalCapital) };
+      }
+      if (cfg.maxPositionUsdc !== undefined) {
+        updates.riskLimits = { ...(updates.riskLimits || INITIAL_RISK_LIMITS), maxPositionUsdc: Number(cfg.maxPositionUsdc) };
+      }
+      if (cfg.maxSingleLoss !== undefined) {
+        updates.riskLimits = { ...(updates.riskLimits || INITIAL_RISK_LIMITS), maxSingleLoss: Number(cfg.maxSingleLoss) };
+      }
+      if (cfg.maxOpenPositions !== undefined) {
+        updates.riskLimits = { ...(updates.riskLimits || INITIAL_RISK_LIMITS), maxOpenPositions: Number(cfg.maxOpenPositions) };
+      }
+      if (cfg.dailyHaltPct !== undefined) {
+        updates.riskLimits = { ...(updates.riskLimits || INITIAL_RISK_LIMITS), dailyHaltPct: Number(cfg.dailyHaltPct) };
+      }
+      if (cfg.takeProfitPct !== undefined) {
+        updates.riskLimits = { ...(updates.riskLimits || INITIAL_RISK_LIMITS), takeProfitPct: Number(cfg.takeProfitPct) };
+      }
+      if (cfg.stopLossPct !== undefined) {
+        updates.riskLimits = { ...(updates.riskLimits || INITIAL_RISK_LIMITS), stopLossPct: Number(cfg.stopLossPct) };
+      }
+    }
+
+    set(updates);
   },
 
   removeProposalLocally: (id) =>
     set((state) => ({
       pendingProposals: state.pendingProposals.filter((p) => p.id !== id),
     })),
+
+  updateThreshold: async (key, value) => {
+    if (isElectron()) {
+      await pmt.updateConfigField(key, value);
+    }
+    set((state) => ({
+      thresholds: { ...state.thresholds, [key]: value },
+    }));
+  },
+
+  updateRiskLimit: async (key, value) => {
+    if (isElectron()) {
+      await pmt.updateConfigField(key, value);
+    }
+    set((state) => ({
+      riskLimits: { ...state.riskLimits, [key]: value },
+    }));
+  },
+
+  setAgentModel: async (agentId, providerId, modelId) => {
+    if (isElectron()) {
+      await pmt.setAgentModel(agentId, providerId, modelId);
+    }
+    set((state) => ({
+      agentModels: { ...state.agentModels, [agentId]: { providerId, modelId } },
+    }));
+  },
+
+  connectProvider: async (providerId, credentials) => {
+    console.log("[settings store] connectProvider called:", providerId, "isElectron:", isElectron());
+    if (isElectron()) {
+      try {
+        await pmt.connectProvider(providerId, credentials);
+        console.log("[settings store] connectProvider succeeded");
+        // Refresh providers list after connection
+        await useSettings.getState().refresh();
+        console.log("[settings store] providers refreshed");
+      } catch (err) {
+        console.error("[settings store] connectProvider failed:", err);
+        throw err;
+      }
+    } else {
+      console.warn("[settings store] Not in Electron, skipping connectProvider");
+    }
+  },
+
+  disconnectProvider: async (providerId) => {
+    if (isElectron()) {
+      await pmt.disconnectProvider(providerId);
+      // Refresh providers list after disconnection
+      await useSettings.getState().refresh();
+    }
+  },
 }));

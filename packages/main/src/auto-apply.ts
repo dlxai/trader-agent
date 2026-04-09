@@ -1,4 +1,5 @@
-import type Database from "better-sqlite3";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DatabaseType = any;
 
 const MIN_SAMPLE_COUNT = 30;
 const MIN_DELTA_WINRATE = 0.05;
@@ -81,7 +82,7 @@ export function evaluateAutoApply(input: AutoApplyInput): AutoApplyDecision {
  * Process all pending filter_proposals and auto-apply high-confidence ones.
  * Called automatically after each Reviewer run.
  */
-export function processProposals(db: Database.Database): ProcessProposalsResult {
+export function processProposals(db: DatabaseType): ProcessProposalsResult {
   const pending = db
     .prepare(
       "SELECT proposal_id, field, proposed_value, sample_count, expected_delta_winrate FROM filter_proposals WHERE status = 'pending'"

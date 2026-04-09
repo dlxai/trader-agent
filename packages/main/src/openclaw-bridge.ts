@@ -38,7 +38,8 @@ export const openclawBridge = {
         return;
       }
 
-      const riskMgrRunner = createRiskMgrRunner({ registry });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const riskMgrRunner = createRiskMgrRunner({ registry: registry as any });
 
       const portfolioRows = db
         .prepare("SELECT key, value FROM portfolio_state")
@@ -83,19 +84,20 @@ export const openclawBridge = {
         });
 
         // Persist to database
-        db.prepare(
-          "INSERT INTO coordinator_log (generated_at, summary, alerts, suggestions, context_snapshot, model_used) VALUES (?, ?, ?, ?, ?, ?)"
-        ).run(
-          Date.now(),
-          brief.summary,
-          JSON.stringify(brief.alerts),
-          JSON.stringify(brief.suggestions),
-          "{}",
-          ""
-        );
+        if (brief) {
+          db.prepare(
+            "INSERT INTO coordinator_log (generated_at, summary, alerts, suggestions, context_snapshot, model_used) VALUES (?, ?, ?, ?, ?, ?)"
+          ).run(
+            Date.now(),
+            brief.summary,
+            JSON.stringify(brief.alerts),
+            JSON.stringify(brief.suggestions),
+            "{}",
+            ""
+          );
 
-        // Show notifications
-        for (const alert of brief.alerts) {
+          // Show notifications
+          for (const alert of brief.alerts) {
           if (alert.severity === "critical") {
             showNotification({
               title: "Polymarket Trader: Critical Alert",
@@ -110,8 +112,9 @@ export const openclawBridge = {
           }
         }
 
-        // Emit to UI
-        openclawBridge.emitToUI("coordinator:brief", brief);
+          // Emit to UI
+          openclawBridge.emitToUI("coordinator:brief", brief);
+        }
       } catch (err) {
         console.error("[openclaw-bridge] Coordinator failed:", err);
       }

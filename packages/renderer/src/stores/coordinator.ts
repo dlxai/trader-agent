@@ -21,25 +21,26 @@ interface CoordinatorState {
   setLatestBrief: (brief: CoordinatorBrief) => void;
 }
 
-// Initial state seeded with M4 mock values so dev-mode (non-Electron) rendering
-// and existing jsdom tests continue to show meaningful data. When running inside
-// Electron, refresh() overwrites these with live IPC data.
+// No mock data - only real data from backend
 export const useCoordinator = create<CoordinatorState>((set) => ({
-  latestSummary:
-    "7 triggers detected in last hour, 2 entered. PnL +$8.34. Net flow on US Election markets unusually elevated \u2014 consider tightening unique_traders_1m to 4.",
-  generatedMinutesAgo: 23,
+  latestSummary: "Waiting for coordinator data...",
+  generatedMinutesAgo: 0,
   latestAlerts: [],
   latestSuggestions: [],
   refresh: async () => {
     if (!isElectron()) return;
-    const brief = await pmt.getLatestCoordinatorBrief();
-    if (!brief) return;
-    set({
-      latestSummary: brief.summary,
-      generatedMinutesAgo: Math.floor(
-        (Date.now() - brief.generated_at) / 60_000,
-      ),
-    });
+    try {
+      const brief = await pmt.getLatestCoordinatorBrief();
+      if (!brief) return;
+      set({
+        latestSummary: brief.summary,
+        generatedMinutesAgo: Math.floor(
+          (Date.now() - brief.generated_at) / 60_000,
+        ),
+      });
+    } catch (err) {
+      console.error("[coordinator] Failed to refresh:", err);
+    }
   },
   setLatestBrief: (brief) => {
     set({

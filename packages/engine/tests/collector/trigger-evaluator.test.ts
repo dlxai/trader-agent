@@ -26,6 +26,8 @@ const baseWindow5m: WindowStats = {
 
 describe("triggerEvaluator", () => {
   const evalTrigger = createTriggerEvaluator(DEFAULT_CONFIG);
+  // Default trade size that passes the minTradeUsdc threshold ($200)
+  const defaultTradeSize = 500;
 
   it("accepts a clean signal that meets all thresholds", () => {
     const result = evalTrigger({
@@ -33,6 +35,7 @@ describe("triggerEvaluator", () => {
       window1m: baseWindow1m,
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(true);
     if (result.accepted) {
@@ -46,6 +49,7 @@ describe("triggerEvaluator", () => {
       window1m: { ...baseWindow1m, netFlow: 500 },
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -59,6 +63,7 @@ describe("triggerEvaluator", () => {
       window1m: { ...baseWindow1m, uniqueTraders: 2 },
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -72,6 +77,7 @@ describe("triggerEvaluator", () => {
       window1m: baseWindow1m,
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -85,6 +91,7 @@ describe("triggerEvaluator", () => {
       window1m: baseWindow1m,
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -98,6 +105,7 @@ describe("triggerEvaluator", () => {
       window1m: baseWindow1m,
       window5m: { ...baseWindow5m, priceMove: 0.01 },
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -111,6 +119,7 @@ describe("triggerEvaluator", () => {
       window1m: baseWindow1m,
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(false);
     if (!result.accepted) {
@@ -135,6 +144,7 @@ describe("triggerEvaluator", () => {
       window1m: { ...baseWindow1m, uniqueTraders: 1, netFlow: 12_000 },
       window5m: baseWindow5m,
       nowMs: Date.now(),
+      latestTradeSizeUsdc: defaultTradeSize,
     });
     expect(result.accepted).toBe(true);
   });

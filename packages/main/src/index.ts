@@ -218,8 +218,11 @@ async function onReady(): Promise<void> {
     });
   }
 
-  // Start collector (engine WS subscription)
-  await ctx.collector.start();
+  // Start collector (engine WS subscription) - non-blocking
+  // Collector will retry connection with exponential backoff
+  ctx.collector.start().catch((err) => {
+    console.error("[pmt-main] collector failed to start (will retry):", err);
+  });
 
   mainWindow.show();
 }

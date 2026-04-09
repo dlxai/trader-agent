@@ -34,10 +34,18 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle("getPortfolioState", async () => {
     const ctx = deps.getEngineContext();
     if (!ctx) return null;
-    const rows = ctx.db
-      .prepare("SELECT key, value FROM portfolio_state")
-      .all() as Array<{ key: string; value: string }>;
-    return Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.value)]));
+    // Use portfolioRepo to get defaults if table is empty
+    const state = ctx.portfolioRepo.read();
+    return {
+      total_capital: state.total_capital,
+      current_equity: state.current_equity,
+      day_start_equity: state.day_start_equity,
+      week_start_equity: state.week_start_equity,
+      peak_equity: state.peak_equity,
+      current_drawdown: state.current_drawdown,
+      daily_halt_triggered: state.daily_halt_triggered,
+      weekly_halt_triggered: state.weekly_halt_triggered,
+    };
   });
 
   ipcMain.handle("getOpenPositions", async () => {
@@ -174,7 +182,26 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   ipcMain.handle("getConfig", async () => {
     const ctx = deps.getEngineContext();
     if (!ctx) return null;
-    return ctx.config;
+    // Map internal config names to frontend-friendly names
+    const cfg = ctx.config;
+    return {
+      // Thresholds
+      minTradeUsdc: cfg.minTradeUsdc,
+      minNetFlow1m: cfg.minNetFlow1mUsdc,
+      minUniqueTraders1m: cfg.minUniqueTraders1m,
+      minPriceMove5m: cfg.minPriceMove5m,
+      minLiquidity: cfg.minLiquidityUsdc,
+      deadZoneMin: cfg.staticDeadZone[0],
+      deadZoneMax: cfg.staticDeadZone[1],
+      // Risk limits
+      totalCapital: cfg.maxTotalPositionUsdc,
+      maxPositionUsdc: cfg.maxPositionUsdc,
+      maxSingleLoss: cfg.maxSingleTradeLossUsdc,
+      maxOpenPositions: cfg.maxOpenPositions,
+      dailyHaltPct: cfg.dailyLossHaltPct,
+      takeProfitPct: cfg.takeProfitPct,
+      stopLossPct: cfg.stopLossPctNormal,
+    };
   });
 
   ipcMain.handle(
@@ -182,11 +209,43 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     async (_e, key: string, value: unknown) => {
       const ctx = deps.getEngineContext();
       if (!ctx) throw new Error("engine not running");
-      ctx.db
-        .prepare(
-          "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
-        )
-        .run(key, JSON.stringify(value), Date.now(), "user");
+
+      // Map frontend field names to internal config field names
+      const fieldMapping: Record<string, string> = {
+        minTradeUsdc: "minTradeUsdc",
+        minNetFlow1m: "minNetFlow1mUsdc",
+        minUniqueTraders1m: "minUniqueTraders1m",
+        minPriceMove5m: "minPriceMove5m",
+        minLiquidity: "minLiquidityUsdc",
+        deadZoneMin: "staticDeadZoneMin",
+        deadZoneMax: "staticDeadZoneMax",
+        totalCapital: "maxTotalPositionUsdc",
+        maxPositionUsdc: "maxPositionUsdc",
+        maxSingleLoss: "maxSingleTradeLossUsdc",
+        maxOpenPositions: "maxOpenPositions",
+        dailyHaltPct: "dailyLossHaltPct",
+        takeProfitPct: "takeProfitPct",
+        stopLossPct: "stopLossPctNormal",
+      };
+
+      const internalKey = fieldMapping[key] || key;
+
+      try {
+        ctx.db
+          .prepare(
+            "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
+          )
+          .run(internalKey, JSON.stringify(value), Date.now(), "user");
+
+        // Also update the in-memory config if the field exists
+        if (ctx.config && internalKey in ctx.config) {
+          (ctx.config as unknown as Record<string, unknown>)[internalKey] = value;
+        }
+        return { success: true };
+      } catch (err) {
+        console.error("[ipc] updateConfigField failed:", err);
+        throw err;
+      }
     }
   );
 
@@ -210,8 +269,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       providerId: string,
       credentials: { apiKey?: string; baseUrl?: string }
     ) => {
+      console.log("[ipc] connectProvider called:", providerId);
       const ctx = deps.getEngineContext();
-      if (!ctx) throw new Error("engine not running");
+      if (!ctx) {
+        console.error("[ipc] connectProvider failed: engine not running");
+        throw new Error("engine not running");
+      }
 
       // Lazy import inside handler to avoid loading all SDKs at boot
       const {
@@ -224,8 +287,10 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       const secrets = createSecretStore();
 
       let provider;
+      console.log("[ipc] Creating provider for:", providerId);
       switch (providerId) {
         case "anthropic_api":
+          console.log("[ipc] Creating Anthropic provider");
           if (!credentials.apiKey) throw new Error("API key required");
           await secrets.set(
             `provider_${providerId}_apiKey`,
@@ -300,12 +365,90 @@ export function registerIpcHandlers(deps: IpcDeps): void {
             baseUrl: credentials.baseUrl ?? "http://localhost:11434",
           });
           break;
+        case "moonshot":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
+          provider = createOpenAICompatProvider({
+            providerId: "moonshot" as never,
+            displayName: "Moonshot",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://api.moonshot.cn/v1",
+            defaultModels: [
+              { id: "moonshot-v1-8k", contextWindow: 8192 },
+              { id: "moonshot-v1-32k", contextWindow: 32768 },
+              { id: "moonshot-v1-128k", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "qwen":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
+          provider = createOpenAICompatProvider({
+            providerId: "qwen" as never,
+            displayName: "Qwen",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            defaultModels: [
+              { id: "qwen-max", contextWindow: 128000 },
+              { id: "qwen-plus", contextWindow: 128000 },
+              { id: "qwen-turbo", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "groq":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
+          provider = createOpenAICompatProvider({
+            providerId: "groq" as never,
+            displayName: "Groq",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://api.groq.com/openai/v1",
+            defaultModels: [
+              { id: "llama-3.3-70b-versatile", contextWindow: 128000 },
+              { id: "llama-3.1-8b-instant", contextWindow: 128000 },
+              { id: "mixtral-8x7b-32768", contextWindow: 32768 },
+            ],
+          });
+          break;
+        case "mistral":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
+          provider = createOpenAICompatProvider({
+            providerId: "mistral" as never,
+            displayName: "Mistral",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://api.mistral.ai/v1",
+            defaultModels: [
+              { id: "mistral-large-latest", contextWindow: 128000 },
+              { id: "mistral-medium-latest", contextWindow: 128000 },
+              { id: "mistral-small-latest", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "xai":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
+          provider = createOpenAICompatProvider({
+            providerId: "xai" as never,
+            displayName: "xAI",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://api.x.ai/v1",
+            defaultModels: [
+              { id: "grok-2", contextWindow: 128000 },
+              { id: "grok-2-vision", contextWindow: 128000 },
+            ],
+          });
+          break;
         default:
           throw new Error(`unknown provider: ${providerId}`);
       }
 
+      console.log("[ipc] Connecting to provider...");
       await provider.connect();
+      console.log("[ipc] Provider connected, registering...");
       ctx.registry.register(provider);
+      console.log("[ipc] Provider registered successfully");
+      return { success: true, providerId };
     }
   );
 

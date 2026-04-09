@@ -1,18 +1,20 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { theme } from "../theme.js";
 import { Sidebar } from "../components/Sidebar.js";
 import { ReportListItem } from "../components/ReportListItem.js";
 import { BucketTable, type BucketRow } from "../components/BucketTable.js";
+import { useSettings } from "../stores/settings.js";
+import { pmt, isElectron } from "../ipc-client.js";
 
-// M4.14 — mock data only. M5 wires real IPC / stores.
+// No mock data - only real data from backend
 
-interface MockProposal {
+interface ReportProposal {
   kind: "auto" | "pending";
   field: string;
   change: string;
 }
 
-interface MockReport {
+interface Report {
   id: string;
   date: string;
   period: "daily" | "weekly";
@@ -25,77 +27,8 @@ interface MockReport {
   sharpe: number;
   buckets: BucketRow[];
   notes: string;
-  proposals: MockProposal[];
+  proposals: ReportProposal[];
 }
-
-const MOCK_REPORTS: MockReport[] = [
-  {
-    id: "2026-04-06",
-    date: "Apr 6, 2026",
-    period: "weekly",
-    tradeCount: 24,
-    netPnl: 127.5,
-    totalPnl7d: 127.5,
-    winRate: 0.625,
-    weeklyWins: 15,
-    weeklyTotal: 24,
-    sharpe: 1.42,
-    buckets: [
-      { bucket: 0.3, trades: 3, wins: 2, winRate: 0.667, netPnl: 24.1 },
-      { bucket: 0.4, trades: 7, wins: 5, winRate: 0.714, netPnl: 56.2 },
-      { bucket: 0.45, trades: 9, wins: 5, winRate: 0.556, netPnl: 31.4 },
-      { bucket: 0.5, trades: 4, wins: 2, winRate: 0.5, netPnl: 15.8 },
-      { bucket: 0.85, trades: 1, wins: 1, winRate: 1.0, netPnl: 0 },
-    ],
-    notes:
-      "Strong week. Bucket 0.40-0.45 was the standout performer (71% win rate). One concerning pattern: 4 of 9 losses hit the time-stop instead of stop loss.",
-    proposals: [
-      { kind: "auto", field: "min_net_flow_1m", change: "3000 \u2192 3500" },
-      {
-        kind: "pending",
-        field: "min_unique_traders_1m",
-        change: "3 \u2192 4",
-      },
-      {
-        kind: "pending",
-        field: "take_profit_pct",
-        change: "0.10 \u2192 0.08",
-      },
-    ],
-  },
-  {
-    id: "2026-04-05",
-    date: "Apr 5, 2026",
-    period: "daily",
-    tradeCount: 4,
-    netPnl: 18.2,
-    totalPnl7d: 0,
-    winRate: 0,
-    weeklyWins: 0,
-    weeklyTotal: 0,
-    sharpe: 0,
-    buckets: [],
-    notes: "",
-    proposals: [],
-  },
-  {
-    id: "2026-04-04",
-    date: "Apr 4, 2026",
-    period: "daily",
-    tradeCount: 3,
-    netPnl: -8.4,
-    totalPnl7d: 0,
-    winRate: 0,
-    weeklyWins: 0,
-    weeklyTotal: 0,
-    sharpe: 0,
-    buckets: [],
-    notes: "",
-    proposals: [],
-  },
-];
-
-const MOCK_PENDING_PROPOSAL_COUNT = 2;
 
 const layoutStyle: React.CSSProperties = {
   display: "flex",
@@ -133,15 +66,41 @@ const detailColumnStyle: React.CSSProperties = {
 };
 
 export function ReportsPage() {
-  const firstReport = MOCK_REPORTS[0];
-  const initialId = firstReport ? firstReport.id : "";
-  const [selectedId, setSelectedId] = useState<string>(initialId);
-  const selected =
-    MOCK_REPORTS.find((r) => r.id === selectedId) ?? firstReport;
+  const [reports, setReports] = useState<Report[]>([]);
+  const [selectedId, setSelectedId] = useState<string>("");
+  const pendingProposalCount = useSettings((s) => s.pendingProposals.length);
+
+  useEffect(() => {
+    if (!isElectron()) return;
+    // Load reports from IPC
+    pmt.getRecentReports(10).then((rows) => {
+      const loadedReports: Report[] = rows.map((r: { path: string; date: string; mtime: number }) => ({
+        id: r.date,
+        date: r.date,
+        period: "daily",
+        tradeCount: 0,
+        netPnl: 0,
+        totalPnl7d: 0,
+        winRate: 0,
+        weeklyWins: 0,
+        weeklyTotal: 0,
+        sharpe: 0,
+        buckets: [],
+        notes: "",
+        proposals: [],
+      }));
+      setReports(loadedReports);
+      if (loadedReports.length > 0 && !selectedId) {
+        setSelectedId(loadedReports[0].id);
+      }
+    });
+  }, []);
+
+  const selected = reports.find((r) => r.id === selectedId);
 
   return (
     <div style={layoutStyle}>
-      <Sidebar pendingProposalCount={MOCK_PENDING_PROPOSAL_COUNT} />
+      <Sidebar pendingProposalCount={pendingProposalCount} />
       <div style={mainStyle}>
         <div style={innerSplitStyle}>
           {/* Report list */}
@@ -167,17 +126,23 @@ export function ReportsPage() {
               </div>
             </div>
             <div style={{ padding: "0 20px" }}>
-              {MOCK_REPORTS.map((r) => (
-                <ReportListItem
-                  key={r.id}
-                  date={r.date}
-                  period={r.period}
-                  tradeCount={r.tradeCount}
-                  netPnl={r.netPnl}
-                  isSelected={r.id === selectedId}
-                  onClick={() => setSelectedId(r.id)}
-                />
-              ))}
+              {reports.length === 0 ? (
+                <div style={{ fontSize: 13, color: theme.colors.silverBlue }}>
+                  No reports yet.
+                </div>
+              ) : (
+                reports.map((r) => (
+                  <ReportListItem
+                    key={r.id}
+                    date={r.date}
+                    period={r.period}
+                    tradeCount={r.tradeCount}
+                    netPnl={r.netPnl}
+                    isSelected={r.id === selectedId}
+                    onClick={() => setSelectedId(r.id)}
+                  />
+                ))
+              )}
             </div>
           </div>
 
@@ -198,7 +163,7 @@ export function ReportsPage() {
 }
 
 interface ReportDetailProps {
-  report: MockReport;
+  report: Report;
 }
 
 function ReportDetail({ report }: ReportDetailProps) {
@@ -224,7 +189,7 @@ function ReportDetail({ report }: ReportDetailProps) {
           marginBottom: 24,
         }}
       >
-        Generated by Reviewer · claude-sonnet-4-6
+        Generated by Reviewer
       </div>
 
       <div

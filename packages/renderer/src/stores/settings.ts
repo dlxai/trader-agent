@@ -119,11 +119,12 @@ export const useSettings = create<SettingsState>((set) => ({
 
   refresh: async () => {
     if (!isElectron()) return;
-    const [providers, proposals, config] = await Promise.all([
-      pmt.listProviders(),
-      pmt.getPendingProposals(),
-      pmt.getConfig(),
-    ]);
+    try {
+      const [providers, proposals, config] = await Promise.all([
+        pmt.listProviders(),
+        pmt.getPendingProposals(),
+        pmt.getConfig(),
+      ]);
 
     // Merge connected providers with initial provider list
     const connectedProviderMap = new Map(
@@ -213,6 +214,9 @@ export const useSettings = create<SettingsState>((set) => ({
     }
 
     set(updates);
+    } catch (err) {
+      console.error("[settings] refresh failed:", err);
+    }
   },
 
   removeProposalLocally: (id) =>

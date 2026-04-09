@@ -219,7 +219,6 @@ export function SettingsPage() {
   const handleConnectProvider = async () => {
     if (!configuringProvider) return;
 
-    alert(`Connecting provider: ${configuringProvider.id}, apiKey: ${apiKeyInput ? "***" : "empty"}`);
     console.log("[SettingsPage] Connecting provider:", configuringProvider.id, "type:", configuringProvider.authType);
 
     // Validate input based on provider type

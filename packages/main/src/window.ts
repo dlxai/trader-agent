@@ -48,12 +48,9 @@ export function createMainWindow(deps: WindowDeps): WindowHandle {
     window.loadFile(deps.rendererUrl);
   }
 
-  // Don't actually quit on close — hide to tray instead
-  window.on("close", (e) => {
-    if (!(app as unknown as Record<string, unknown>).isQuittingExplicit) {
-      e.preventDefault();
-      window.hide();
-    }
+  // Handle window close - destroy tray when window is actually closing
+  window.on("close", () => {
+    // Window is actually closing, clean up will happen in before-quit
   });
 
   return {

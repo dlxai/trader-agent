@@ -237,7 +237,8 @@ if (process.env.VITEST !== "true") {
     });
 
   app.on("window-all-closed", () => {
-    // tray keeps app alive
+    // Quit app when all windows are closed (no tray mode for now)
+    app.quit();
   });
 
   app.on("before-quit", async () => {

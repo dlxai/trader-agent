@@ -231,8 +231,8 @@ async function onReady(): Promise<void> {
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
-  console.log("[pmt-main] Another instance is already running, quitting...");
-  app.quit();
+  console.log("[pmt-main] Another instance is already running, exiting immediately...");
+  app.exit(0);
 } else {
   app.on("second-instance", () => {
     // Someone tried to run a second instance, focus the existing window
@@ -261,12 +261,27 @@ if (process.env.VITEST !== "true") {
     app.quit();
   });
 
-  app.on("before-quit", async () => {
+  app.on("before-quit", (event) => {
+    // Prevent default quit to handle cleanup asynchronously
+    event.preventDefault();
+    
+    console.log("[pmt-main] before-quit: starting cleanup...");
+    
     if (!isOpenClawMode) {
       reviewerScheduler?.stop();
       coordinatorScheduler?.stop();
     }
-    await shutdownEngine();
+    
+    // Shutdown engine and then quit
+    shutdownEngine()
+      .then(() => {
+        console.log("[pmt-main] cleanup complete, quitting...");
+        app.exit(0);
+      })
+      .catch((err) => {
+        console.error("[pmt-main] cleanup failed:", err);
+        app.exit(1);
+      });
   });
 
   app.on("activate", () => {

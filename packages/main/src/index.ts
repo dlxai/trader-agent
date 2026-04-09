@@ -227,6 +227,26 @@ async function onReady(): Promise<void> {
   mainWindow.show();
 }
 
+// Single instance lock - prevent multiple app instances
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  console.log("[pmt-main] Another instance is already running, quitting...");
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    // Someone tried to run a second instance, focus the existing window
+    console.log("[pmt-main] Second instance detected, focusing existing window...");
+    if (mainWindow) {
+      if (mainWindow.isVisible()) {
+        mainWindow.focus();
+      } else {
+        mainWindow.show();
+      }
+    }
+  });
+}
+
 if (process.env.VITEST !== "true") {
   app
     .whenReady()

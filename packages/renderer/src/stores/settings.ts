@@ -78,6 +78,13 @@ const INITIAL_PROVIDERS: ProviderInfoUI[] = [
   { id: "ollama", name: "Ollama", authType: "cli_credential", isConnected: false },
 ];
 
+// Default proxy configuration - enabled by default with common proxy address
+export const DEFAULT_PROXY_CONFIG = {
+  enabled: true,
+  httpProxy: "http://127.0.0.1:7890",
+  httpsProxy: "http://127.0.0.1:7890",
+};
+
 const INITIAL_AGENT_MODELS: Record<
   "analyzer" | "reviewer" | "risk_manager",
   AgentAssignment

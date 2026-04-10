@@ -133,9 +133,22 @@ export async function bootEngine(): Promise<EngineContext> {
     // Ignore proxy config errors
   }
 
-  // No default proxy - must be configured explicitly
+  // Use default proxy if none configured
   if (!proxyUrl) {
-    console.log(`[lifecycle] No proxy configured, connecting directly`);
+    const defaultProxy = "http://127.0.0.1:7890";
+    proxyUrl = defaultProxy;
+    console.log(`[lifecycle] Using default proxy: ${proxyUrl}`);
+    
+    // Save default config to database for UI consistency
+    try {
+      const defaultConfig = { enabled: true, httpProxy: defaultProxy, httpsProxy: defaultProxy };
+      db.prepare(
+        "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
+      ).run("proxy_config", JSON.stringify(defaultConfig), Date.now(), "default");
+      console.log(`[lifecycle] Default proxy config saved to database`);
+    } catch (err) {
+      console.error(`[lifecycle] Failed to save default proxy config:`, err);
+    }
   }
 
   // Set proxy URL in config for collector HTTP fallback
@@ -149,6 +162,8 @@ export async function bootEngine(): Promise<EngineContext> {
     logger: noopLogger,
   });
 
+  console.log(`[lifecycle] Creating collector with proxyUrl: ${proxyUrl || 'none'}`);
+  
   const collector = createCollector({
     config,
     bus,

@@ -148,10 +148,10 @@ export function SettingsPage() {
   const connectProvider = useSettings((s) => s.connectProvider);
   const disconnectProvider = useSettings((s) => s.disconnectProvider);
 
-  // Proxy configuration state
-  const [proxyEnabled, setProxyEnabled] = useState(false);
-  const [httpProxy, setHttpProxy] = useState("");
-  const [httpsProxy, setHttpsProxy] = useState("");
+  // Proxy configuration state - default enabled with common proxy address
+  const [proxyEnabled, setProxyEnabled] = useState(true);
+  const [httpProxy, setHttpProxy] = useState("http://127.0.0.1:7890");
+  const [httpsProxy, setHttpsProxy] = useState("http://127.0.0.1:7890");
   const [proxySaved, setProxySaved] = useState(false);
 
   // Provider configuration dialog state
@@ -163,12 +163,27 @@ export function SettingsPage() {
 
   useEffect(() => {
     void useSettings.getState().refresh();
-    // Load proxy config
+    // Load proxy config - use defaults if not configured
     if (isElectron()) {
       pmt.getProxyConfig().then((config) => {
-        setProxyEnabled(config.enabled);
-        setHttpProxy(config.httpProxy || "");
-        setHttpsProxy(config.httpsProxy || "");
+        // If no config saved (all empty), use defaults
+        if (!config.httpProxy && !config.httpsProxy) {
+          console.log("[SettingsPage] No proxy config found, using defaults");
+          const defaultConfig = {
+            enabled: true,
+            httpProxy: "http://127.0.0.1:7890",
+            httpsProxy: "http://127.0.0.1:7890",
+          };
+          setProxyEnabled(defaultConfig.enabled);
+          setHttpProxy(defaultConfig.httpProxy);
+          setHttpsProxy(defaultConfig.httpsProxy);
+          // Save default config
+          pmt.setProxyConfig(defaultConfig).catch(() => {});
+        } else {
+          setProxyEnabled(config.enabled);
+          setHttpProxy(config.httpProxy || "");
+          setHttpsProxy(config.httpsProxy || "");
+        }
       }).catch(() => {
         // Ignore errors
       });

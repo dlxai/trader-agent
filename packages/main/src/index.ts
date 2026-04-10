@@ -29,6 +29,7 @@ import {
 import { createRiskMgrRunner } from "@pmt/llm";
 import { processProposals } from "./auto-apply.js";
 import { openclawBridge } from "./openclaw-bridge.js";
+import { initLogger, getLogger, closeLogger } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const preloadPath = join(__dirname, "preload.js");
@@ -52,6 +53,9 @@ const noopLogger = {
 };
 
 async function onReady(): Promise<void> {
+  // Initialize file logger at app startup
+  const logger = initLogger({ consoleOutput: true });
+  logger.info("[pmt-main] Application starting...");
   const ctx = await bootEngine();
 
   mainWindow = createMainWindow({ preloadPath, rendererUrl, isDev });
@@ -69,7 +73,7 @@ async function onReady(): Promise<void> {
 
   if (isOpenClawMode) {
     // OpenClaw Mode: Schedulers are managed by OpenClaw, we just bridge events to UI
-    console.log("[pmt-main] Running in OpenClaw plugin mode");
+    logger.info("[pmt-main] Running in OpenClaw plugin mode");
 
     // Set up bridge to forward OpenClaw events to UI
     openclawBridge.onUIEvent("coordinator:brief", (brief) => {
@@ -87,7 +91,7 @@ async function onReady(): Promise<void> {
     });
   } else {
     // Standalone Mode: Use internal schedulers
-    console.log("[pmt-main] Running in standalone mode");
+    logger.info("[pmt-main] Running in standalone mode");
 
     // Reviewer scheduler — daily
     reviewerScheduler = createReviewerScheduler({
@@ -102,7 +106,7 @@ async function onReady(): Promise<void> {
         // After Reviewer generates new proposals, immediately try to auto-apply
         const autoApplyResult = processProposals(ctx.db);
         if (autoApplyResult.applied > 0 || autoApplyResult.skipped > 0) {
-          console.log("[reviewer] auto-apply:", autoApplyResult);
+          logger.info("[reviewer] auto-apply: %o", autoApplyResult);
         }
         return {
           bucketCount: result.bucketCount,
@@ -221,8 +225,10 @@ async function onReady(): Promise<void> {
   // Start collector (engine WS subscription) - non-blocking
   // Collector will retry connection with exponential backoff
   ctx.collector.start().catch((err) => {
-    console.error("[pmt-main] collector failed to start (will retry):", err);
+    logger.error("[pmt-main] collector failed to start (will retry): %s", err);
   });
+
+  logger.info("[pmt-main] Application started successfully. Log directory: %s", logger.getLogDir());
 
   mainWindow.show();
 }
@@ -231,12 +237,14 @@ async function onReady(): Promise<void> {
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
+  // Can't use logger here as app isn't ready yet
   console.log("[pmt-main] Another instance is already running, exiting immediately...");
   app.exit(0);
 } else {
   app.on("second-instance", () => {
     // Someone tried to run a second instance, focus the existing window
-    console.log("[pmt-main] Second instance detected, focusing existing window...");
+    const logger = getLogger();
+    logger.info("[pmt-main] Second instance detected, focusing existing window...");
     if (mainWindow) {
       if (mainWindow.isVisible()) {
         mainWindow.focus();
@@ -252,7 +260,8 @@ if (process.env.VITEST !== "true") {
     .whenReady()
     .then(onReady)
     .catch((err) => {
-      console.error("[pmt-main] failed to start:", err);
+      const logger = getLogger();
+      logger.error("[pmt-main] failed to start: %s", err);
       app.quit();
     });
 
@@ -264,22 +273,25 @@ if (process.env.VITEST !== "true") {
   app.on("before-quit", (event) => {
     // Prevent default quit to handle cleanup asynchronously
     event.preventDefault();
-    
-    console.log("[pmt-main] before-quit: starting cleanup...");
-    
+
+    const logger = getLogger();
+    logger.info("[pmt-main] before-quit: starting cleanup...");
+
     if (!isOpenClawMode) {
       reviewerScheduler?.stop();
       coordinatorScheduler?.stop();
     }
-    
+
     // Shutdown engine and then quit
     shutdownEngine()
       .then(() => {
-        console.log("[pmt-main] cleanup complete, quitting...");
+        logger.info("[pmt-main] cleanup complete, quitting...");
+        closeLogger();
         app.exit(0);
       })
       .catch((err) => {
-        console.error("[pmt-main] cleanup failed:", err);
+        logger.error("[pmt-main] cleanup failed: %s", err);
+        closeLogger();
         app.exit(1);
       });
   });

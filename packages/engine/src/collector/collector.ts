@@ -90,7 +90,7 @@ export function createCollector(deps: CollectorDeps): Collector {
 
     // Filter 3: Bot detection
     if (botFilter.isBot(trade.address, trade.timestampMs)) {
-      console.log(`[collector] Trade rejected: bot detected`);
+      deps.logger.info(`[collector] Trade rejected: bot detected`);
       return;
     }
 
@@ -106,7 +106,7 @@ export function createCollector(deps: CollectorDeps): Collector {
     // Notify executor of price update for position monitoring (stop-loss / take-profit)
     deps.executor.onPriceTick(trade.marketId, snapshot.currentMidPrice, trade.timestampMs);
 
-    console.log(`[collector] Evaluating trigger for ${trade.marketId}: netFlow=$${snapshot.window1m.netFlow}, traders=${snapshot.window1m.uniqueTraders}, priceMove=${snapshot.window5m.priceMove}`);
+    deps.logger.info(`[collector] Evaluating trigger for ${trade.marketId}: netFlow=$${snapshot.window1m.netFlow}, traders=${snapshot.window1m.uniqueTraders}, priceMove=${snapshot.window5m.priceMove}`);
 
     const meta = await getMeta(trade.marketId);
     const result = evalTrigger({
@@ -123,10 +123,10 @@ export function createCollector(deps: CollectorDeps): Collector {
       latestTradeSizeUsdc: trade.sizeUsdc,
     });
     if (!result.accepted) {
-      console.log(`[collector] Trigger rejected: ${result.rejection}`);
+      deps.logger.info(`[collector] Trigger rejected: ${result.rejection}`);
       return;
     }
-    console.log(`[collector] Trigger accepted: ${result.direction}`);
+    deps.logger.info(`[collector] Trigger accepted: ${result.direction}`);
 
     const event: TriggerEvent = {
       type: "trigger",
@@ -161,8 +161,8 @@ export function createCollector(deps: CollectorDeps): Collector {
 
   return {
     async start(): Promise<void> {
-      console.log(`[collector] Starting collector...`);
-      
+      deps.logger.info(`[collector] Starting collector...`);
+
       // Try WebSocket first, fallback to HTTP polling if it fails
       try {
         wsClient = deps.wsClientFactory((t) => {
@@ -170,11 +170,11 @@ export function createCollector(deps: CollectorDeps): Collector {
             deps.logger.error(`[collector] ingestTrade error: ${String(err)}`)
           );
         });
-        console.log(`[collector] Connecting WebSocket client...`);
+        deps.logger.info(`[collector] Connecting WebSocket client...`);
         await wsClient.connect();
-        console.log(`[collector] WebSocket connected successfully`);
+        deps.logger.info(`[collector] WebSocket connected successfully`);
       } catch (wsErr) {
-        console.warn(`[collector] WebSocket failed, using HTTP fallback: ${String(wsErr)}`);
+        deps.logger.warn(`[collector] WebSocket failed, using HTTP fallback: ${String(wsErr)}`);
         useHttpFallback = true;
         httpPoller = createHttpPoller({
           onTrade: (t) => {

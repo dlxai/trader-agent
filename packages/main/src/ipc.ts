@@ -20,6 +20,7 @@ import type { RiskMgrRunner } from "@pmt/llm";
 import type { ReviewerScheduler } from "./reviewer-scheduler.js";
 import type { CoordinatorScheduler } from "./coordinator.js";
 import type { WindowHandle } from "./window.js";
+import { getLogDir, readLatestLogs, listLogFiles } from "./logger.js";
 
 export interface IpcDeps {
   getEngineContext: () => EngineContext | null;
@@ -813,6 +814,26 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       delete process.env.HTTP_PROXY;
     }
     
+    return { success: true };
+  });
+
+  // Logging
+  ipcMain.handle("getLogDir", async () => {
+    return getLogDir();
+  });
+
+  ipcMain.handle("getLatestLogs", async (_e, maxLines: number = 500) => {
+    return readLatestLogs(maxLines);
+  });
+
+  ipcMain.handle("listLogFiles", async () => {
+    return listLogFiles();
+  });
+
+  ipcMain.handle("openLogDir", async () => {
+    const { shell } = await import("electron");
+    const logDir = getLogDir();
+    await shell.openPath(logDir);
     return { success: true };
   });
 }

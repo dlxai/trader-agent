@@ -37,6 +37,7 @@ import {
   type VerdictEvent,
 } from "@pmt/engine";
 import { createProviderRegistry, type ProviderRegistry } from "@pmt/llm";
+import { getLogger } from "./logger.js";
 
 // Derive the better-sqlite3 Database type from the engine factory so that
 // @pmt/main does not need a direct dependency on better-sqlite3.
@@ -60,6 +61,15 @@ const noopLogger = {
   warn: (_m: string): void => {},
   error: (_m: string): void => {},
 };
+
+// Helper to get logger safely (may not be initialized during early boot)
+function getLoggerSafe() {
+  try {
+    return getLogger();
+  } catch {
+    return console;
+  }
+}
 
 /**
  * Resolve the on-disk data directory for the trader.
@@ -107,16 +117,18 @@ export async function bootEngine(): Promise<EngineContext> {
   const bus = createEventBus();
   const registry = createProviderRegistry();
 
+  const logger = getLoggerSafe();
+
   try {
     await loadStoredProviders(registry);
   } catch (err) {
-    console.error("[lifecycle] failed to load stored providers:", err);
+    logger.error("[lifecycle] failed to load stored providers: %s", err);
   }
 
   // Load proxy configuration from database or environment
   let proxyUrl: string | undefined = process.env.https_proxy || process.env.HTTPS_PROXY;
   if (proxyUrl) {
-    console.log(`[lifecycle] Using proxy from environment: ${proxyUrl}`);
+    logger.info(`[lifecycle] Using proxy from environment: ${proxyUrl}`);
   }
 
   // Also check database for proxy config (can override env)
@@ -126,7 +138,7 @@ export async function bootEngine(): Promise<EngineContext> {
       const proxyConfig = JSON.parse(proxyRow.value) as { enabled: boolean; httpsProxy: string };
       if (proxyConfig.enabled && proxyConfig.httpsProxy) {
         proxyUrl = proxyConfig.httpsProxy;
-        console.log(`[lifecycle] Using proxy from database: ${proxyUrl}`);
+        logger.info(`[lifecycle] Using proxy from database: ${proxyUrl}`);
       }
     }
   } catch {
@@ -137,17 +149,17 @@ export async function bootEngine(): Promise<EngineContext> {
   if (!proxyUrl) {
     const defaultProxy = "http://127.0.0.1:7890";
     proxyUrl = defaultProxy;
-    console.log(`[lifecycle] Using default proxy: ${proxyUrl}`);
-    
+    logger.info(`[lifecycle] Using default proxy: ${proxyUrl}`);
+
     // Save default config to database for UI consistency
     try {
       const defaultConfig = { enabled: true, httpProxy: defaultProxy, httpsProxy: defaultProxy };
       db.prepare(
         "INSERT INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, source=excluded.source"
       ).run("proxy_config", JSON.stringify(defaultConfig), Date.now(), "default");
-      console.log(`[lifecycle] Default proxy config saved to database`);
+      logger.info(`[lifecycle] Default proxy config saved to database`);
     } catch (err) {
-      console.error(`[lifecycle] Failed to save default proxy config:`, err);
+      logger.error(`[lifecycle] Failed to save default proxy config: %s`, err);
     }
   }
 
@@ -162,8 +174,8 @@ export async function bootEngine(): Promise<EngineContext> {
     logger: noopLogger,
   });
 
-  console.log(`[lifecycle] Creating collector with proxyUrl: ${proxyUrl || 'none'}`);
-  
+  logger.info(`[lifecycle] Creating collector with proxyUrl: ${proxyUrl || 'none'}`);
+
   const collector = createCollector({
     config,
     bus,
@@ -173,7 +185,7 @@ export async function bootEngine(): Promise<EngineContext> {
         // Use Activity WebSocket (RTDS) for trade activity stream
         url: config.polymarketActivityWsUrl,
         onTrade,
-        onError: (err) => console.error(`[ws-activity] ${err.message}`),
+        onError: (err) => logger.error(`[ws-activity] ${err.message}`),
         ...(proxyUrl ? { proxyUrl } : {}),
       }),
     // Temporarily disable CLOB WebSocket due to connection issues
@@ -181,18 +193,22 @@ export async function bootEngine(): Promise<EngineContext> {
     //   createClobWsClient({
     //     url: config.polymarketClobWsUrl,
     //     onPriceUpdate,
-    //     onError: (err) => console.error(`[ws-clob] ${err.message}`),
+    //     onError: (err) => logger.error(`[ws-clob] ${err.message}`),
     //     ...(proxyUrl ? { proxyUrl } : {}),
     //   }),
     marketMetadataProvider: createRealMarketMetadataProvider(proxyUrl),
-    logger: console,
+    logger: {
+      info: (msg: string) => logger.info(`[collector] ${msg}`),
+      warn: (msg: string) => logger.warn(`[collector] ${msg}`),
+      error: (msg: string) => logger.error(`[collector] ${msg}`),
+    },
   });
 
   // Set up Analyzer LLM integration
   setAnalyzerCallback(async (trigger: TriggerEvent): Promise<VerdictEvent | null> => {
     const assigned = registry.getProviderForAgent("analyzer");
     if (!assigned) {
-      console.warn("[lifecycle] No LLM provider available for analyzer");
+      logger.warn("[lifecycle] No LLM provider available for analyzer");
       return null;
     }
 
@@ -211,7 +227,7 @@ export async function bootEngine(): Promise<EngineContext> {
       if (!response) return null;
 
       const parsed = parseVerdict(response.content);
-      
+
       const verdictEvent: VerdictEvent = {
         type: "verdict",
         trigger,
@@ -223,7 +239,7 @@ export async function bootEngine(): Promise<EngineContext> {
 
       return verdictEvent;
     } catch (err) {
-      console.error("[lifecycle] Analyzer LLM error:", err);
+      logger.error("[lifecycle] Analyzer LLM error: %s", err);
       return null;
     }
   });
@@ -233,17 +249,17 @@ export async function bootEngine(): Promise<EngineContext> {
   bus.onTrigger(async (trigger) => {
     const analyzerCb = getAnalyzerCallback();
     if (!analyzerCb) {
-      console.warn("[lifecycle] No analyzer callback registered");
+      logger.warn("[lifecycle] No analyzer callback registered");
       return;
     }
     try {
       const verdict = await analyzerCb(trigger);
       if (verdict) {
         bus.publishVerdict(verdict);
-        console.log(`[lifecycle] Analyzer verdict: ${verdict.verdict} for ${trigger.market_id}`);
+        logger.info(`[lifecycle] Analyzer verdict: ${verdict.verdict} for ${trigger.market_id}`);
       }
     } catch (err) {
-      console.error("[lifecycle] Analyzer error:", err);
+      logger.error("[lifecycle] Analyzer error: %s", err);
     }
   });
 
@@ -325,6 +341,7 @@ export function getEngineContext(): EngineContext | null {
  * This allows runtime configuration changes via the desktop UI.
  */
 function applyDatabaseConfigOverrides(db: EngineDatabase, config: TraderConfig): TraderConfig {
+  const logger = getLoggerSafe();
   try {
     const rows = db.prepare("SELECT key, value FROM filter_config").all() as Array<{ key: string; value: string }>;
     const overrides: Record<string, unknown> = {};
@@ -354,9 +371,9 @@ function applyDatabaseConfigOverrides(db: EngineDatabase, config: TraderConfig):
     if (overrides.takeProfitPct !== undefined) config.takeProfitPct = Number(overrides.takeProfitPct);
     if (overrides.stopLossPctNormal !== undefined) config.stopLossPctNormal = Number(overrides.stopLossPctNormal);
 
-    console.log("[lifecycle] Applied", rows.length, "config overrides from database");
+    logger.info("[lifecycle] Applied %d config overrides from database", rows.length);
   } catch (err) {
-    console.error("[lifecycle] Failed to load config overrides from database:", err);
+    logger.error("[lifecycle] Failed to load config overrides from database: %s", err);
   }
   return config;
 }
@@ -367,6 +384,7 @@ function applyDatabaseConfigOverrides(db: EngineDatabase, config: TraderConfig):
  * single bad credential never blocks the rest of the app from booting.
  */
 async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
+  const logger = getLoggerSafe();
   const { createSecretStore } = await import("./secrets.js");
   const {
     createAnthropicProvider,
@@ -470,7 +488,7 @@ async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
         registry.register(provider);
       }
     } catch (err) {
-      console.error(`[lifecycle] failed to reconnect ${providerId}:`, err);
+      logger.error(`[lifecycle] failed to reconnect %s: %s`, providerId, err);
     }
   }
 }

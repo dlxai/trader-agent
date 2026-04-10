@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.2.0",
   "description": "Polymarket trading desktop application with OpenClaw plugin support",
+  "productName": "PolymarketTrader",
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",

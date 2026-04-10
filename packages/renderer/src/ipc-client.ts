@@ -86,6 +86,11 @@ declare global {
       getAutoApplyHistory(limit?: number): Promise<unknown[]>;
       getProxyConfig(): Promise<{ enabled: boolean; httpProxy: string; httpsProxy: string }>;
       setProxyConfig(config: { enabled: boolean; httpProxy: string; httpsProxy: string }): Promise<{ success: boolean }>;
+      // Logging
+      getLogDir(): Promise<string>;
+      getLatestLogs(maxLines?: number): Promise<string>;
+      listLogFiles(): Promise<Array<{ name: string; path: string; size: number; date: string }>>;
+      openLogDir(): Promise<{ success: boolean }>;
       on(event: string, handler: (...args: unknown[]) => void): () => void;
     };
   }

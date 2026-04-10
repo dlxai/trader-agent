@@ -68,6 +68,12 @@ const api = {
   setProxyConfig: (config: { enabled: boolean; httpProxy: string; httpsProxy: string }) =>
     ipcRenderer.invoke("setProxyConfig", config),
 
+  // Logging
+  getLogDir: () => ipcRenderer.invoke("getLogDir"),
+  getLatestLogs: (maxLines?: number) => ipcRenderer.invoke("getLatestLogs", maxLines),
+  listLogFiles: () => ipcRenderer.invoke("listLogFiles"),
+  openLogDir: () => ipcRenderer.invoke("openLogDir"),
+
   // Event subscriptions (Main -> Renderer push)
   on: (event: string, handler: (...args: unknown[]) => void) => {
     const wrapped = (_e: unknown, ...args: unknown[]) => handler(...args);

@@ -161,6 +161,11 @@ export function SettingsPage() {
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
+  // Log viewer state
+  const [logDir, setLogDir] = useState<string>("");
+  const [latestLogs, setLatestLogs] = useState<string>("");
+  const [showLogViewer, setShowLogViewer] = useState(false);
+
   useEffect(() => {
     void useSettings.getState().refresh();
     // Load proxy config - use defaults if not configured
@@ -187,6 +192,11 @@ export function SettingsPage() {
       }).catch(() => {
         // Ignore errors
       });
+
+      // Load log directory
+      pmt.getLogDir().then((dir) => {
+        setLogDir(dir);
+      }).catch(() => {});
     }
   }, []);
 
@@ -273,6 +283,20 @@ export function SettingsPage() {
       await disconnectProvider(providerId);
     } catch (err) {
       console.error("Failed to disconnect provider:", err);
+    }
+  };
+
+  const handleOpenLogDir = async () => {
+    if (isElectron()) {
+      await pmt.openLogDir();
+    }
+  };
+
+  const handleViewLogs = async () => {
+    if (isElectron()) {
+      const logs = await pmt.getLatestLogs(200);
+      setLatestLogs(logs || "No logs available yet.");
+      setShowLogViewer(true);
     }
   };
 
@@ -510,6 +534,62 @@ export function SettingsPage() {
           </table>
         </div>
 
+        {/* Log Files section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>📄 Log Files</div>
+          <div style={sectionSubtitleStyle}>
+            Application logs are automatically saved to disk for debugging
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>
+              Log Directory
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                fontFamily: "monospace",
+                background: theme.colors.fafafa,
+                padding: "8px 12px",
+                borderRadius: 6,
+                border: `1px solid ${theme.colors.borderGray}`,
+                wordBreak: "break-all",
+              }}
+            >
+              {logDir || "Loading..."}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 12 }}>
+            <button
+              onClick={() => void handleViewLogs()}
+              style={{
+                background: theme.colors.purple,
+                color: theme.colors.white,
+                border: "none",
+                borderRadius: 6,
+                padding: "8px 16px",
+                fontSize: 14,
+                fontWeight: theme.font.weights.medium,
+                cursor: "pointer",
+              }}
+            >
+              View Latest Logs
+            </button>
+            <button
+              onClick={() => void handleOpenLogDir()}
+              style={{
+                background: "transparent",
+                border: `1px solid ${theme.colors.borderGray}`,
+                borderRadius: 6,
+                padding: "8px 16px",
+                fontSize: 14,
+                cursor: "pointer",
+              }}
+            >
+              Open Log Folder
+            </button>
+          </div>
+        </div>
+
         {/* Proxy Configuration section */}
         <div style={sectionCardStyle}>
           <div style={sectionTitleStyle}>🌐 Proxy Configuration</div>
@@ -723,6 +803,113 @@ export function SettingsPage() {
             ))
           )}
         </div>
+
+        {/* Log Viewer Dialog */}
+        {showLogViewer && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0, 0, 0, 0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowLogViewer(false);
+              }
+            }}
+          >
+            <div
+              style={{
+                background: theme.colors.white,
+                borderRadius: 12,
+                padding: 24,
+                width: 900,
+                maxWidth: "95vw",
+                height: "80vh",
+                display: "flex",
+                flexDirection: "column",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 18,
+                  fontWeight: theme.font.weights.semibold,
+                  marginBottom: 16,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <span>Latest Application Logs</span>
+                <button
+                  onClick={() => setShowLogViewer(false)}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    fontSize: 20,
+                    cursor: "pointer",
+                    color: theme.colors.coolGray,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  overflow: "auto",
+                  background: "#1a1a2e",
+                  borderRadius: 8,
+                  padding: 16,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  color: "#e0e0e0",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-all",
+                }}
+              >
+                {latestLogs || "No logs available yet."}
+              </div>
+              <div style={{ marginTop: 16, display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                <button
+                  onClick={() => void handleViewLogs()}
+                  style={{
+                    background: theme.colors.purple,
+                    color: theme.colors.white,
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "8px 16px",
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  Refresh
+                </button>
+                <button
+                  onClick={() => setShowLogViewer(false)}
+                  style={{
+                    background: "transparent",
+                    border: `1px solid ${theme.colors.borderGray}`,
+                    borderRadius: 6,
+                    padding: "8px 16px",
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Provider Configuration Dialog */}
         {configuringProvider && (

@@ -440,6 +440,90 @@ export function registerIpcHandlers(deps: IpcDeps): void {
             ],
           });
           break;
+        // Subscription / OAuth providers
+        case "anthropic_subscription":
+          provider = createAnthropicProvider({
+            mode: "subscription",
+            readCliToken: async () => {
+              // Try to read from environment or prompt user
+              const token = process.env.ANTHROPIC_CLI_TOKEN;
+              if (!token) throw new Error("ANTHROPIC_CLI_TOKEN environment variable not set");
+              return token;
+            },
+          });
+          break;
+        case "gemini_oauth":
+          provider = createGeminiProvider({
+            mode: "oauth",
+            getAccessToken: async () => {
+              const token = process.env.GEMINI_ACCESS_TOKEN;
+              if (!token) throw new Error("GEMINI_ACCESS_TOKEN environment variable not set");
+              return token;
+            },
+          });
+          break;
+        // Coding plan providers - use OpenAI compatible with OAuth token
+        case "zhipu_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "zhipu_coding" as never,
+            displayName: "Zhipu (Coding Plan)",
+            apiKey: process.env.ZHIPU_CODING_TOKEN || "",
+            baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+            defaultModels: [
+              { id: "glm-4.5", contextWindow: 128000 },
+              { id: "glm-4-flash", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "qwen_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "qwen_coding" as never,
+            displayName: "Qwen (Coding Plan)",
+            apiKey: process.env.QWEN_CODING_TOKEN || "",
+            baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            defaultModels: [
+              { id: "qwen-max", contextWindow: 128000 },
+              { id: "qwen-plus", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "kimi_code":
+          provider = createOpenAICompatProvider({
+            providerId: "kimi_code" as never,
+            displayName: "Kimi (Code Plan)",
+            apiKey: process.env.KIMI_CODE_TOKEN || "",
+            baseUrl: "https://api.moonshot.cn/v1",
+            defaultModels: [
+              { id: "kimi-k1-5", contextWindow: 128000 },
+              { id: "kimi-k1-5-32k", contextWindow: 32768 },
+            ],
+          });
+          break;
+        case "minimax_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "minimax_coding" as never,
+            displayName: "MiniMax (Coding Plan)",
+            apiKey: process.env.MINIMAX_CODING_TOKEN || "",
+            baseUrl: "https://api.minimax.chat/v1",
+            defaultModels: [
+              { id: "MiniMax-M2.1", contextWindow: 128000 },
+              { id: "MiniMax-Text-01", contextWindow: 1000000 },
+            ],
+          });
+          break;
+        case "volcengine_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "volcengine_coding" as never,
+            displayName: "Volcengine (Coding Plan)",
+            apiKey: process.env.VOLCENGINE_CODING_TOKEN || "",
+            baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+            defaultModels: [
+              { id: "doubao-pro-32k", contextWindow: 32000 },
+              { id: "doubao-pro-128k", contextWindow: 128000 },
+              { id: "doubao-lite-32k", contextWindow: 32000 },
+            ],
+          });
+          break;
         default:
           throw new Error(`unknown provider: ${providerId}`);
       }

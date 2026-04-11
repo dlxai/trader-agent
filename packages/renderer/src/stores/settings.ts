@@ -74,6 +74,14 @@ const INITIAL_PROVIDERS: ProviderInfoUI[] = [
   { id: "groq", name: "Groq", authType: "api_key", isConnected: false },
   { id: "mistral", name: "Mistral", authType: "api_key", isConnected: false },
   { id: "xai", name: "xAI", authType: "api_key", isConnected: false },
+  // Subscription / Coding Plan providers
+  { id: "anthropic_subscription", name: "Anthropic (Subscription)", authType: "oauth", isConnected: false },
+  { id: "gemini_oauth", name: "Gemini (OAuth)", authType: "oauth", isConnected: false },
+  { id: "zhipu_coding", name: "Zhipu (Coding Plan)", authType: "oauth", isConnected: false },
+  { id: "qwen_coding", name: "Qwen (Coding Plan)", authType: "oauth", isConnected: false },
+  { id: "kimi_code", name: "Kimi (Code Plan)", authType: "oauth", isConnected: false },
+  { id: "minimax_coding", name: "MiniMax (Coding Plan)", authType: "oauth", isConnected: false },
+  { id: "volcengine_coding", name: "Volcengine (Coding Plan)", authType: "oauth", isConnected: false },
   // Local/CLI providers
   { id: "ollama", name: "Ollama", authType: "cli_credential", isConnected: false },
 ];

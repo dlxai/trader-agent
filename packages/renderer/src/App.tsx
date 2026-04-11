@@ -6,7 +6,7 @@ import { ReportsPage } from "./pages/ReportsPage.js";
 import { ChatPage } from "./pages/ChatPage.js";
 import { pmt, isElectron } from "./ipc-client.js";
 import { useChat } from "./stores/chat.js";
-import { useCoordinator } from "./stores/coordinator.js";
+import { useCoordinator, type Alert } from "./stores/coordinator.js";
 
 // Setup IPC event listeners for streaming chat and other push events
 function useIpcListeners() {
@@ -43,7 +43,7 @@ function useIpcListeners() {
 
     // Listen for Coordinator brief updates
     const unsubBrief = pmt.on("coordinator:brief", (payload: unknown) => {
-      const brief = payload as { summary: string; alerts: Array<{ severity: string; text: string }>; suggestions: string[] };
+      const brief = payload as { summary: string; alerts: Alert[]; suggestions: string[] };
       console.log("[IPC] Coordinator brief received");
       setLatestBrief(brief);
     });

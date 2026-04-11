@@ -91,7 +91,7 @@ export function ReportsPage() {
       }));
       setReports(loadedReports);
       if (loadedReports.length > 0 && !selectedId) {
-        setSelectedId(loadedReports[0].id);
+        setSelectedId(loadedReports[0]?.id ?? "");
       }
     });
   }, []);

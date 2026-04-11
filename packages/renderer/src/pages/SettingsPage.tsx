@@ -195,8 +195,12 @@ export function SettingsPage() {
 
       // Load log directory
       pmt.getLogDir().then((dir) => {
-        setLogDir(dir);
-      }).catch(() => {});
+        console.log("[SettingsPage] Log dir loaded:", dir);
+        setLogDir(dir || "No log directory");
+      }).catch((err) => {
+        console.error("[SettingsPage] Failed to load log dir:", err);
+        setLogDir("Error loading log directory");
+      });
     }
   }, []);
 
@@ -272,7 +276,12 @@ export function SettingsPage() {
       setConfiguringProvider(null);
     } catch (err) {
       console.error("[SettingsPage] Failed to connect provider:", err);
-      setConnectError(String(err));
+      // Provide more helpful error message for OAuth providers
+      if (configuringProvider.authType === "oauth" && String(err).includes("environment variable")) {
+        setConnectError(`${String(err)}\n\nPlease set the required environment variable and restart the application.`);
+      } else {
+        setConnectError(String(err));
+      }
     } finally {
       setConnecting(false);
     }
@@ -1010,6 +1019,51 @@ export function SettingsPage() {
                     value={baseUrlInput}
                     onChange={(e) => setBaseUrlInput(e.target.value)}
                     placeholder="http://localhost:11434"
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      border: `1px solid ${theme.colors.borderGray}`,
+                      borderRadius: 6,
+                      fontSize: 14,
+                    }}
+                  />
+                </div>
+              )}
+
+              {configuringProvider.authType === "oauth" && (
+                <div style={{ marginBottom: 16 }}>
+                  <div
+                    style={{
+                      background: "#f0f9ff",
+                      border: "1px solid #bae6fd",
+                      borderRadius: 6,
+                      padding: "12px 16px",
+                      fontSize: 13,
+                      color: "#0369a1",
+                      marginBottom: 12,
+                    }}
+                  >
+                    <strong>Subscription / Coding Plan Mode</strong>
+                    <br />
+                    This provider uses environment variables for authentication.
+                    <br />
+                    Token will be read from environment variable.
+                  </div>
+                  <label
+                    style={{
+                      display: "block",
+                      fontSize: 12,
+                      color: theme.colors.coolGray,
+                      marginBottom: 4,
+                    }}
+                  >
+                    Access Token (optional - will use env var if empty)
+                  </label>
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder="Leave empty to use environment variable"
                     style={{
                       width: "100%",
                       padding: "10px 12px",

@@ -8,3 +8,4 @@ export * from "./exit-monitor.js";
 export * from "./conflict-lock.js";
 export * from "./executor.js";
 export * from "./price-bucket.js";
+export * from "./drawdown-guard.js";

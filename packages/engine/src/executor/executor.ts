@@ -12,6 +12,7 @@ import { createCircuitBreaker } from "./circuit-breaker.js";
 import { createConflictLock } from "./conflict-lock.js";
 import { computePnL } from "./pnl.js";
 import { evaluateExit } from "./exit-monitor.js";
+import { createDrawdownGuard } from "./drawdown-guard.js";
 import { randomUUID } from "node:crypto";
 
 export interface ExecutorDeps {
@@ -35,6 +36,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const tracker = createPositionTracker({ signalRepo: deps.signalRepo });
   const breaker = createCircuitBreaker({ config: deps.config, portfolioRepo: deps.portfolioRepo });
   const lock = createConflictLock();
+  const drawdownGuard = createDrawdownGuard(deps.config.drawdownGuard);
 
   // Re-acquire locks for positions loaded from DB on startup
   for (const pos of tracker.listOpen()) lock.tryAcquire(pos.market_id);
@@ -128,7 +130,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   async function onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): Promise<void> {
     for (const pos of tracker.listOpen()) {
       if (pos.market_id !== marketId) continue;
-      const decision = evaluateExit(pos, { currentPrice: currentMidPrice, nowMs }, deps.config);
+      const decision = evaluateExit(pos, { currentPrice: currentMidPrice, nowMs }, deps.config, drawdownGuard);
       if (decision.exit && decision.reason) {
         await closePosition(pos, currentMidPrice, nowMs, decision.reason);
       }
@@ -175,6 +177,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       holding_duration_sec: Math.floor((nowMs - pos.triggered_at) / 1000),
     });
     lock.release(pos.market_id);
+    drawdownGuard.clear(pos.signal_id);
 
     const state = deps.portfolioRepo.read();
     deps.portfolioRepo.update({ current_equity: state.current_equity + pnl.pnlNet });

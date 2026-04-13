@@ -28,10 +28,6 @@ export function createLiveFiller(config: LiveFillerConfig): OrderFiller {
     const shares = params.sizeUsdc / limitPrice;
     const limitResult = await config.clob.placeLimitOrder({ tokenId: params.tokenId, side: "BUY", price: limitPrice, size: shares });
 
-    if (config.limitOrderTimeoutSec > 0) {
-      await new Promise((r) => setTimeout(r, config.limitOrderTimeoutSec * 1000));
-    }
-
     if (limitResult.filled) {
       return { filled: true, fillPrice: limitPrice, filledSize: params.sizeUsdc, orderId: limitResult.orderId, reason: "filled" };
     }

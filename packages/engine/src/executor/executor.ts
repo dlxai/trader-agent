@@ -30,6 +30,7 @@ export interface Executor {
   onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): Promise<void>;
   closePosition(pos: SignalLogRow, exitMidPrice: number, nowMs: number, reason: ExitReason): Promise<void>;
   openPositions(): SignalLogRow[];
+  getLastPrice(marketId: string): number | undefined;
 }
 
 export function createExecutor(deps: ExecutorDeps): Executor {
@@ -37,6 +38,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const breaker = createCircuitBreaker({ config: deps.config, portfolioRepo: deps.portfolioRepo });
   const lock = createConflictLock();
   const drawdownGuard = createDrawdownGuard(deps.config.drawdownGuard);
+  const lastPriceMap = new Map<string, number>();
 
   // Re-acquire locks for positions loaded from DB on startup
   for (const pos of tracker.listOpen()) lock.tryAcquire(pos.market_id);
@@ -128,6 +130,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   }
 
   async function onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): Promise<void> {
+    lastPriceMap.set(marketId, currentMidPrice);
     for (const pos of tracker.listOpen()) {
       if (pos.market_id !== marketId) continue;
       const decision = evaluateExit(pos, { currentPrice: currentMidPrice, nowMs }, deps.config, drawdownGuard);
@@ -193,5 +196,6 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     onPriceTick,
     closePosition,
     openPositions: () => tracker.listOpen(),
+    getLastPrice: (marketId) => lastPriceMap.get(marketId),
   };
 }

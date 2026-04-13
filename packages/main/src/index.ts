@@ -180,8 +180,21 @@ async function onReady(): Promise<void> {
           if (action.type === "emergency_close" && action.signal_id) {
             const pos = ctx.executor.openPositions().find((p) => p.signal_id === action.signal_id);
             if (pos) {
-              await ctx.executor.closePosition(pos, pos.entry_price, Date.now(), "COORD_EMERGENCY");
+              const lastPrice = ctx.executor.getLastPrice(pos.market_id) ?? pos.entry_price;
+              await ctx.executor.closePosition(pos, lastPrice, Date.now(), "COORD_EMERGENCY");
+              logger.info(`[coordinator] Emergency closed ${action.signal_id}: ${action.reason}`);
             }
+          } else if (action.type === "pause_new_entry") {
+            // Set daily halt flag to pause new entries
+            ctx.portfolioRepo.update({ daily_halt_triggered: true });
+            logger.info(`[coordinator] Paused new entries: ${action.reason}`);
+          } else if (action.type === "resume_entry") {
+            ctx.portfolioRepo.update({ daily_halt_triggered: false });
+            logger.info(`[coordinator] Resumed entries: ${action.reason}`);
+          } else if (action.type === "adjust_exit") {
+            logger.info(`[coordinator] Adjust exit for ${action.signal_id}: SL=${action.new_stop_loss_pct} - ${action.reason}`);
+            // Note: SL/TP adjustment requires per-position config override, which is not yet implemented
+            // For now, just log the recommendation
           }
         },
       } : {}),

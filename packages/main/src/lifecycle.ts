@@ -229,7 +229,8 @@ export async function bootEngine(): Promise<EngineContext> {
         if (action.action === "close") {
           const pos = executor.openPositions().find((p) => p.signal_id === action.signal_id);
           if (pos) {
-            void executor.closePosition(pos, pos.entry_price, Date.now(), "AI_EXIT");
+            const lastPrice = executor.getLastPrice(pos.market_id) ?? pos.entry_price;
+            void executor.closePosition(pos, lastPrice, Date.now(), "AI_EXIT");
           }
         }
       },

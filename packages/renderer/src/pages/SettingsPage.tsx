@@ -4,6 +4,7 @@ import { Sidebar } from "../components/Sidebar.js";
 import { ProviderCard } from "../components/ProviderCard.js";
 import { ProposalCard } from "../components/ProposalCard.js";
 import { useSettings, type ProviderInfoUI } from "../stores/settings.js";
+import type { CustomEndpointInfo } from "../stores/settings.js";
 import { pmt, isElectron } from "../ipc-client.js";
 
 const layoutStyle: React.CSSProperties = {
@@ -147,6 +148,26 @@ export function SettingsPage() {
   const setAgentModel = useSettings((s) => s.setAgentModel);
   const connectProvider = useSettings((s) => s.connectProvider);
   const disconnectProvider = useSettings((s) => s.disconnectProvider);
+  const liveTradeSettings = useSettings((s) => s.liveTradeSettings);
+  const aiExitSettings = useSettings((s) => s.aiExitSettings);
+  const drawdownGuardSettings = useSettings((s) => s.drawdownGuardSettings);
+  const coordinatorSettings = useSettings((s) => s.coordinatorSettings);
+  const customEndpoints = useSettings((s) => s.customEndpoints);
+  const updateLiveTradeSettings = useSettings((s) => s.updateLiveTradeSettings);
+  const updateAiExitSettings = useSettings((s) => s.updateAiExitSettings);
+  const updateDrawdownGuardSettings = useSettings((s) => s.updateDrawdownGuardSettings);
+  const updateCoordinatorSettings = useSettings((s) => s.updateCoordinatorSettings);
+  const addCustomEndpoint = useSettings((s) => s.addCustomEndpoint);
+  const removeCustomEndpoint = useSettings((s) => s.removeCustomEndpoint);
+
+  // Custom endpoint form state
+  const [showAddEndpoint, setShowAddEndpoint] = useState(false);
+  const [endpointDisplayName, setEndpointDisplayName] = useState("");
+  const [endpointBaseUrl, setEndpointBaseUrl] = useState("");
+  const [endpointApiKey, setEndpointApiKey] = useState("");
+  const [endpointModelName, setEndpointModelName] = useState("");
+  const [addEndpointError, setAddEndpointError] = useState<string | null>(null);
+  const [addingEndpoint, setAddingEndpoint] = useState(false);
 
   // Proxy configuration state - default enabled with common proxy address
   const [proxyEnabled, setProxyEnabled] = useState(true);
@@ -292,6 +313,43 @@ export function SettingsPage() {
       await disconnectProvider(providerId);
     } catch (err) {
       console.error("Failed to disconnect provider:", err);
+    }
+  };
+
+  const handleAddCustomEndpoint = async () => {
+    if (!endpointDisplayName.trim()) {
+      setAddEndpointError("Display name is required");
+      return;
+    }
+    if (!endpointBaseUrl.trim()) {
+      setAddEndpointError("Base URL is required");
+      return;
+    }
+    if (!endpointModelName.trim()) {
+      setAddEndpointError("Model name is required");
+      return;
+    }
+    setAddingEndpoint(true);
+    setAddEndpointError(null);
+    try {
+      const endpointInput: { displayName: string; baseUrl: string; apiKey?: string; modelName: string } = {
+        displayName: endpointDisplayName.trim(),
+        baseUrl: endpointBaseUrl.trim(),
+        modelName: endpointModelName.trim(),
+      };
+      if (endpointApiKey.trim()) {
+        endpointInput.apiKey = endpointApiKey.trim();
+      }
+      await addCustomEndpoint(endpointInput);
+      setShowAddEndpoint(false);
+      setEndpointDisplayName("");
+      setEndpointBaseUrl("");
+      setEndpointApiKey("");
+      setEndpointModelName("");
+    } catch (err) {
+      setAddEndpointError(String(err));
+    } finally {
+      setAddingEndpoint(false);
     }
   };
 
@@ -744,6 +802,291 @@ export function SettingsPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Trading Section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>Trading Mode</div>
+          <div style={sectionSubtitleStyle}>Configure live vs paper trading and order execution settings</div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", cursor: "pointer", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={liveTradeSettings.mode === "live"}
+                onChange={(e) => void updateLiveTradeSettings({ mode: e.target.checked ? "live" : "paper" })}
+                style={{ marginRight: 8 }}
+              />
+              <span style={{ fontWeight: theme.font.weights.medium }}>
+                Live Trading {liveTradeSettings.mode === "live"
+                  ? <span style={{ color: "#e53e3e", fontSize: 12, marginLeft: 4 }}>(LIVE)</span>
+                  : <span style={{ color: theme.colors.coolGray, fontSize: 12, marginLeft: 4 }}>(Paper)</span>}
+              </span>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, fontSize: 13 }}>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Slippage Threshold (%)</div>
+              <EditableField
+                label="Slippage Threshold"
+                value={(liveTradeSettings.slippageThreshold * 100).toFixed(1)}
+                onSave={(v) => void updateLiveTradeSettings({ slippageThreshold: v / 100 })}
+                suffix="%"
+              />
+            </div>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Max Slippage (%)</div>
+              <EditableField
+                label="Max Slippage"
+                value={(liveTradeSettings.maxSlippage * 100).toFixed(1)}
+                onSave={(v) => void updateLiveTradeSettings({ maxSlippage: v / 100 })}
+                suffix="%"
+              />
+            </div>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Limit Order Timeout (s)</div>
+              <EditableField
+                label="Limit Order Timeout"
+                value={liveTradeSettings.limitOrderTimeoutSec}
+                onSave={(v) => void updateLiveTradeSettings({ limitOrderTimeoutSec: v })}
+                suffix=" s"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* AI Position Evaluator Section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>AI Position Evaluator</div>
+          <div style={sectionSubtitleStyle}>Periodically re-evaluate open positions using AI analysis</div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", cursor: "pointer", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={aiExitSettings.enabled}
+                onChange={(e) => void updateAiExitSettings({ enabled: e.target.checked })}
+                style={{ marginRight: 8 }}
+              />
+              <span style={{ fontWeight: theme.font.weights.medium }}>Enable AI Exit Evaluator</span>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, fontSize: 13 }}>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Evaluation Interval (seconds)</div>
+              <EditableField
+                label="Interval"
+                value={aiExitSettings.intervalSec}
+                onSave={(v) => void updateAiExitSettings({ intervalSec: v })}
+                suffix=" s"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Coordinator Section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>Coordinator</div>
+          <div style={sectionSubtitleStyle}>Controls how the coordinator agent operates and takes actions</div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", cursor: "pointer", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={coordinatorSettings.actionable}
+                onChange={(e) => void updateCoordinatorSettings({ actionable: e.target.checked })}
+                style={{ marginRight: 8 }}
+              />
+              <span style={{ fontWeight: theme.font.weights.medium }}>Allow Coordinator Actions</span>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 16, fontSize: 13 }}>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Run Interval (minutes)</div>
+              <EditableField
+                label="Interval"
+                value={coordinatorSettings.intervalMin}
+                onSave={(v) => void updateCoordinatorSettings({ intervalMin: v })}
+                suffix=" min"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Drawdown Guard Section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>Drawdown Guard</div>
+          <div style={sectionSubtitleStyle}>Protect profits by limiting drawdown from peak equity</div>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", cursor: "pointer", marginBottom: 12 }}>
+              <input
+                type="checkbox"
+                checked={drawdownGuardSettings.enabled}
+                onChange={(e) => void updateDrawdownGuardSettings({ enabled: e.target.checked })}
+                style={{ marginRight: 8 }}
+              />
+              <span style={{ fontWeight: theme.font.weights.medium }}>Enable Drawdown Guard</span>
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, fontSize: 13 }}>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Min Profit Threshold (%)</div>
+              <EditableField
+                label="Min Profit"
+                value={(drawdownGuardSettings.minProfitPct * 100).toFixed(1)}
+                onSave={(v) => void updateDrawdownGuardSettings({ minProfitPct: v / 100 })}
+                suffix="%"
+              />
+            </div>
+            <div>
+              <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Max Drawdown from Peak (%)</div>
+              <EditableField
+                label="Max Drawdown"
+                value={(drawdownGuardSettings.maxDrawdownFromPeak * 100).toFixed(1)}
+                onSave={(v) => void updateDrawdownGuardSettings({ maxDrawdownFromPeak: v / 100 })}
+                suffix="%"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Custom LLM Endpoints Section */}
+        <div style={sectionCardStyle}>
+          <div style={sectionTitleStyle}>Custom LLM Endpoints</div>
+          <div style={sectionSubtitleStyle}>Add custom OpenAI-compatible endpoints for use as LLM providers</div>
+          {customEndpoints.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              {customEndpoints.map((ep: CustomEndpointInfo) => (
+                <div
+                  key={ep.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "10px 12px",
+                    border: `1px solid ${theme.colors.borderGray}`,
+                    borderRadius: 8,
+                    marginBottom: 8,
+                    fontSize: 13,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: theme.font.weights.medium }}>{ep.displayName}</div>
+                    <div style={{ color: theme.colors.coolGray, fontSize: 12 }}>{ep.baseUrl} · {ep.modelName}</div>
+                  </div>
+                  <button
+                    onClick={() => void removeCustomEndpoint(ep.id)}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${theme.colors.borderGray}`,
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      fontSize: 12,
+                      cursor: "pointer",
+                      color: "#e53e3e",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {!showAddEndpoint ? (
+            <button
+              onClick={() => { setShowAddEndpoint(true); setAddEndpointError(null); }}
+              style={{
+                background: theme.colors.purple,
+                color: theme.colors.white,
+                border: "none",
+                borderRadius: 6,
+                padding: "8px 16px",
+                fontSize: 14,
+                fontWeight: theme.font.weights.medium,
+                cursor: "pointer",
+              }}
+            >
+              + Add Endpoint
+            </button>
+          ) : (
+            <div style={{ border: `1px solid ${theme.colors.borderGray}`, borderRadius: 8, padding: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: theme.font.weights.medium, marginBottom: 12 }}>New Custom Endpoint</div>
+              <div style={{ display: "grid", gap: 12 }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>Display Name *</label>
+                  <input
+                    type="text"
+                    value={endpointDisplayName}
+                    onChange={(e) => setEndpointDisplayName(e.target.value)}
+                    placeholder="My Local Model"
+                    style={{ width: "100%", padding: "8px 12px", border: `1px solid ${theme.colors.borderGray}`, borderRadius: 6, fontSize: 14 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>Base URL *</label>
+                  <input
+                    type="text"
+                    value={endpointBaseUrl}
+                    onChange={(e) => setEndpointBaseUrl(e.target.value)}
+                    placeholder="http://localhost:11434/v1"
+                    style={{ width: "100%", padding: "8px 12px", border: `1px solid ${theme.colors.borderGray}`, borderRadius: 6, fontSize: 14 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>API Key (optional)</label>
+                  <input
+                    type="password"
+                    value={endpointApiKey}
+                    onChange={(e) => setEndpointApiKey(e.target.value)}
+                    placeholder="Leave empty if not required"
+                    style={{ width: "100%", padding: "8px 12px", border: `1px solid ${theme.colors.borderGray}`, borderRadius: 6, fontSize: 14 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>Model Name *</label>
+                  <input
+                    type="text"
+                    value={endpointModelName}
+                    onChange={(e) => setEndpointModelName(e.target.value)}
+                    placeholder="llama3.2"
+                    style={{ width: "100%", padding: "8px 12px", border: `1px solid ${theme.colors.borderGray}`, borderRadius: 6, fontSize: 14 }}
+                  />
+                </div>
+                {addEndpointError && (
+                  <div style={{ color: "#e53e3e", fontSize: 13 }}>{addEndpointError}</div>
+                )}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => void handleAddCustomEndpoint()}
+                    disabled={addingEndpoint}
+                    style={{
+                      background: theme.colors.purple,
+                      color: theme.colors.white,
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "8px 16px",
+                      fontSize: 14,
+                      fontWeight: theme.font.weights.medium,
+                      cursor: addingEndpoint ? "not-allowed" : "pointer",
+                      opacity: addingEndpoint ? 0.7 : 1,
+                    }}
+                  >
+                    {addingEndpoint ? "Adding..." : "Add"}
+                  </button>
+                  <button
+                    onClick={() => { setShowAddEndpoint(false); setAddEndpointError(null); }}
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${theme.colors.borderGray}`,
+                      borderRadius: 6,
+                      padding: "8px 16px",
+                      fontSize: 14,
+                      cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Pending Proposals section */}

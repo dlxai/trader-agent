@@ -25,6 +25,17 @@ export interface ParsedVerdict {
   direction: "buy_yes" | "buy_no";
   confidence: number;
   reasoning: string;
+  estimated_fair_value?: number;
+  edge?: number;
+  suggested_stop_loss_pct?: number;
+  risk_notes?: string;
+}
+
+export interface AccountContext {
+  current_equity: number;
+  open_position_count: number;
+  total_exposure: number;
+  existing_markets: string[];
 }
 
 export interface AnalyzerRunnerOptions {
@@ -33,10 +44,10 @@ export interface AnalyzerRunnerOptions {
 }
 
 export interface AnalyzerRunner {
-  judge(trigger: TriggerEvent): Promise<ParsedVerdict | null>;
+  judge(trigger: TriggerEvent, account?: AccountContext): Promise<ParsedVerdict | null>;
 }
 
-function buildPrompt(trigger: TriggerEvent): string {
+function buildPrompt(trigger: TriggerEvent, account?: AccountContext): string {
   const ms = trigger.resolves_at - trigger.triggered_at;
   const hours = Math.floor(ms / 3600000);
   const mins = Math.floor((ms % 3600000) / 60000);
@@ -54,7 +65,12 @@ Detected flow indicators:
 - Price move (5m): ${(trigger.snapshot.price_move_5m * 100).toFixed(2)}%
 
 Suggested direction from flow: ${trigger.direction}
-
+${account != null ? `
+Account state:
+- Current equity: $${account.current_equity.toFixed(2)}
+- Open positions: ${account.open_position_count}
+- Total exposure: $${account.total_exposure.toFixed(2)}${account.existing_markets.includes(trigger.market_id) ? `
+WARNING: You already have an open position in this market (${trigger.market_id}). Factor this into your analysis.` : ""}` : ""}
 Respond with ONLY the JSON verdict object.`;
 }
 
@@ -75,6 +91,10 @@ function tryParseVerdict(text: string): ParsedVerdict | null {
       direction: o.direction as ParsedVerdict["direction"],
       confidence: conf,
       reasoning: typeof o.reasoning === "string" ? o.reasoning : "",
+      estimated_fair_value: typeof o.estimated_fair_value === "number" ? o.estimated_fair_value : undefined,
+      edge: typeof o.edge === "number" ? o.edge : undefined,
+      suggested_stop_loss_pct: typeof o.suggested_stop_loss_pct === "number" ? o.suggested_stop_loss_pct : undefined,
+      risk_notes: typeof o.risk_notes === "string" ? o.risk_notes : undefined,
     };
   } catch {
     return null;
@@ -85,11 +105,11 @@ export function createAnalyzerRunner(opts: AnalyzerRunnerOptions): AnalyzerRunne
   const timeoutMs = opts.timeoutMs ?? 30000;
 
   return {
-    async judge(trigger: TriggerEvent): Promise<ParsedVerdict | null> {
+    async judge(trigger: TriggerEvent, account?: AccountContext): Promise<ParsedVerdict | null> {
       const assigned = opts.registry.getProviderForAgent("analyzer");
       if (!assigned) return null;
 
-      const prompt = buildPrompt(trigger);
+      const prompt = buildPrompt(trigger, account);
       const chatPromise = assigned.provider.chat({
         model: assigned.modelId,
         messages: [

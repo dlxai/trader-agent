@@ -5,6 +5,7 @@ import { createSignalLogRepo } from "../../src/db/signal-log-repo.js";
 import { createPortfolioStateRepo } from "../../src/db/portfolio-state-repo.js";
 import { createEventBus } from "../../src/bus/events.js";
 import { createExecutor } from "../../src/executor/executor.js";
+import { createPaperFiller } from "../../src/executor/paper-fill.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import type { VerdictEvent } from "../../src/bus/types.js";
 
@@ -35,6 +36,10 @@ function makeVerdict(): VerdictEvent {
   };
 }
 
+function makeFiller() {
+  return createPaperFiller({ slippagePct: DEFAULT_CONFIG.paperSlippagePct });
+}
+
 describe("executor", () => {
   let db: Database.Database;
   let bus: ReturnType<typeof createEventBus>;
@@ -59,122 +64,114 @@ describe("executor", () => {
       bus,
       signalRepo,
       portfolioRepo,
+      filler: makeFiller(),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
   });
 
-  it("executes an order when conditions are met", () => {
+  it("executes an order when conditions are met", async () => {
     const verdict = makeVerdict();
-    const sigId = exec.handleVerdict(verdict);
+    const sigId = await exec.handleVerdict(verdict);
     expect(sigId).not.toBeNull();
     expect(exec.openPositions()).toHaveLength(1);
   });
 
-  it("rejects a second order for the same market (conflict lock)", () => {
+  it("rejects a second order for the same market (conflict lock)", async () => {
     const verdict = makeVerdict();
-    const id1 = exec.handleVerdict(verdict);
-    const id2 = exec.handleVerdict(verdict);
+    const id1 = await exec.handleVerdict(verdict);
+    const id2 = await exec.handleVerdict(verdict);
     expect(id1).not.toBeNull();
     expect(id2).toBeNull();
     expect(exec.openPositions()).toHaveLength(1);
   });
 
-  it("rejects order when daily halt is triggered", () => {
+  it("rejects order when daily halt is triggered", async () => {
     portfolioRepo.update({ daily_halt_triggered: true });
-    expect(exec.handleVerdict(makeVerdict())).toBeNull();
+    expect(await exec.handleVerdict(makeVerdict())).toBeNull();
   });
 
-  it("rejects order when Kelly returns 0 (dead zone)", () => {
+  it("rejects order when Kelly returns 0 (dead zone)", async () => {
     const verdict = makeVerdict();
     verdict.trigger.snapshot.current_mid_price = 0.72;
-    expect(exec.handleVerdict(verdict)).toBeNull();
+    expect(await exec.handleVerdict(verdict)).toBeNull();
   });
 
   // Note: entry mid price is 0.40, fill price = 0.40 * 1.005 = 0.402.
   // takeProfitPct = 0.10, so we need (tick - 0.402) / 0.402 >= 0.10 → tick >= 0.4422.
   // Using 0.45 gives profitDelta ≈ 0.119 which exceeds the 10% threshold.
-  it("processes tick, triggers A-TP at +10%, closes position", () => {
+  it("processes tick, triggers A-TP at +10%, closes position", async () => {
     const verdict = makeVerdict();
-    const sigId = exec.handleVerdict(verdict);
+    const sigId = await exec.handleVerdict(verdict);
     expect(sigId).not.toBeNull();
-    exec.onPriceTick("m1", 0.45, Date.now());
+    await exec.onPriceTick("m1", 0.45, Date.now());
     expect(exec.openPositions()).toHaveLength(0);
   });
 
-  it("handles reverse signal by publishing exit", () => {
+  it("handles reverse signal by publishing exit", async () => {
     const verdict = makeVerdict();
-    const sigId = exec.handleVerdict(verdict);
+    const sigId = await exec.handleVerdict(verdict);
     expect(sigId).not.toBeNull();
     bus.publishTrigger({
       ...verdict.trigger,
       direction: "buy_no",
       triggered_at: Date.now() + 60_000,
     });
+    // Give async handler time to run
+    await new Promise((r) => setTimeout(r, 10));
     expect(exec.openPositions()).toHaveLength(0);
   });
 
-  it("rejects non-real_signal verdict without opening a position", () => {
+  it("rejects non-real_signal verdict without opening a position", async () => {
     const verdict = makeVerdict();
     verdict.verdict = "noise";
-    expect(exec.handleVerdict(verdict)).toBeNull();
+    expect(await exec.handleVerdict(verdict)).toBeNull();
     expect(exec.openPositions()).toHaveLength(0);
   });
 
-  it("onPriceTick skips positions on other markets (continue branch)", () => {
-    // Open a position on m1, then send a tick for m2 — nothing should close
+  it("onPriceTick skips positions on other markets (continue branch)", async () => {
     const v1 = makeVerdict();
     v1.trigger.market_id = "m1";
-    expect(exec.handleVerdict(v1)).not.toBeNull();
+    expect(await exec.handleVerdict(v1)).not.toBeNull();
     expect(exec.openPositions()).toHaveLength(1);
-    // Tick for a different market — should not close the m1 position
-    exec.onPriceTick("m2", 0.99, Date.now());
+    await exec.onPriceTick("m2", 0.99, Date.now());
     expect(exec.openPositions()).toHaveLength(1);
   });
 
-  it("onPriceTick does not close when exit conditions not met", () => {
-    // Open a position and tick with a price that does not trigger stop-loss or take-profit
+  it("onPriceTick does not close when exit conditions not met", async () => {
     const verdict = makeVerdict();
-    const sigId = exec.handleVerdict(verdict);
+    const sigId = await exec.handleVerdict(verdict);
     expect(sigId).not.toBeNull();
-    // entry_price ≈ 0.40 * 1.005 = 0.402. A tick at 0.41 is only ~2% profit, below 10% TP.
-    exec.onPriceTick("m1", 0.41, Date.now());
+    await exec.onPriceTick("m1", 0.41, Date.now());
     expect(exec.openPositions()).toHaveLength(1);
   });
 
-  it("re-acquires conflict locks for positions loaded from DB on startup", () => {
-    // Open a position through exec so it is persisted in the DB
+  it("re-acquires conflict locks for positions loaded from DB on startup", async () => {
     const verdict = makeVerdict();
     verdict.trigger.market_id = "recovery-market";
-    const sigId = exec.handleVerdict(verdict);
+    const sigId = await exec.handleVerdict(verdict);
     expect(sigId).not.toBeNull();
 
-    // Create a second executor over the same DB — it should recover the open position
-    // and re-acquire the lock for "recovery-market" so a duplicate can't be opened.
     const signalRepo2 = createSignalLogRepo(db);
     const exec2 = createExecutor({
       config: DEFAULT_CONFIG,
       bus,
       signalRepo: signalRepo2,
       portfolioRepo,
+      filler: makeFiller(),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     expect(exec2.openPositions()).toHaveLength(1);
-    // The lock for "recovery-market" should already be held — a duplicate verdict is rejected
     const dup = makeVerdict();
     dup.trigger.market_id = "recovery-market";
-    expect(exec2.handleVerdict(dup)).toBeNull();
+    expect(await exec2.handleVerdict(dup)).toBeNull();
   });
 
-  it("rejects order when weekly halt is triggered", () => {
+  it("rejects order when weekly halt is triggered", async () => {
     portfolioRepo.update({ weekly_halt_triggered: true });
-    expect(exec.handleVerdict(makeVerdict())).toBeNull();
+    expect(await exec.handleVerdict(makeVerdict())).toBeNull();
   });
 
-  it("rejects order when total exposure cap is reached", () => {
-    // Use a custom executor with a tiny maxTotalPositionUsdc so the first
-    // position saturates the cap.
-    // At price 0.40: size = floor(min(10000*kelly, 300, 50/0.40)) = floor(125) = 125
-    // Set maxTotalPositionUsdc = 100 so 125 + 50 > 100 after first open.
+  it("rejects order when total exposure cap is reached", async () => {
     const db2 = new Database(":memory:");
     runMigrations(db2);
     const signalRepo2 = createSignalLogRepo(db2);
@@ -191,25 +188,19 @@ describe("executor", () => {
       bus,
       signalRepo: signalRepo2,
       portfolioRepo: portfolioRepo2,
+      filler: makeFiller(),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
-    // First position: size=floor(50/0.40)=125, but maxPositionUsdc=300 and capital check:
-    // 125 >= minPositionUsdc=50, so it opens successfully with size=125
-    // After open, totalExposure()=125; 125 + 50 > 100 so next is rejected.
-    // BUT 125 > maxTotalPositionUsdc=100 already — the check is BEFORE open.
-    // At open time: totalExposure()=0, 0 + 50 <= 100, so first position opens.
     const v1 = makeVerdict();
     v1.trigger.market_id = "cap-m1";
-    const id1 = exec2.handleVerdict(v1);
+    const id1 = await exec2.handleVerdict(v1);
     expect(id1).not.toBeNull();
-    // Now totalExposure=125; 125 + 50=175 > 100 => rejected
     const v2 = makeVerdict();
     v2.trigger.market_id = "cap-m2";
-    expect(exec2.handleVerdict(v2)).toBeNull();
+    expect(await exec2.handleVerdict(v2)).toBeNull();
   });
 
-  it("rejects order when max open positions limit is reached", () => {
-    // Use a custom executor with maxOpenPositions=1 to hit the limit quickly.
+  it("rejects order when max open positions limit is reached", async () => {
     const db3 = new Database(":memory:");
     runMigrations(db3);
     const signalRepo3 = createSignalLogRepo(db3);
@@ -226,13 +217,14 @@ describe("executor", () => {
       bus,
       signalRepo: signalRepo3,
       portfolioRepo: portfolioRepo3,
+      filler: makeFiller(),
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
     const v1 = makeVerdict();
     v1.trigger.market_id = "max-m1";
-    expect(exec3.handleVerdict(v1)).not.toBeNull();
+    expect(await exec3.handleVerdict(v1)).not.toBeNull();
     const v2 = makeVerdict();
     v2.trigger.market_id = "max-m2";
-    expect(exec3.handleVerdict(v2)).toBeNull();
+    expect(await exec3.handleVerdict(v2)).toBeNull();
   });
 });

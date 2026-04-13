@@ -45,11 +45,46 @@ export interface RiskLimits {
   stopLossPct: number;
 }
 
+export interface LiveTradeSettings {
+  mode: "paper" | "live";
+  slippageThreshold: number;
+  maxSlippage: number;
+  limitOrderTimeoutSec: number;
+}
+
+export interface AiExitSettings {
+  enabled: boolean;
+  intervalSec: number;
+}
+
+export interface DrawdownGuardSettings {
+  enabled: boolean;
+  minProfitPct: number;
+  maxDrawdownFromPeak: number;
+}
+
+export interface CoordinatorSettings {
+  actionable: boolean;
+  intervalMin: number;
+}
+
+export interface CustomEndpointInfo {
+  id: string;
+  displayName: string;
+  baseUrl: string;
+  modelName: string;
+}
+
 interface SettingsState {
   providers: ProviderInfoUI[];
   agentModels: Record<"analyzer" | "reviewer" | "risk_manager", AgentAssignment>;
   thresholds: Thresholds;
   riskLimits: RiskLimits;
+  liveTradeSettings: LiveTradeSettings;
+  aiExitSettings: AiExitSettings;
+  drawdownGuardSettings: DrawdownGuardSettings;
+  coordinatorSettings: CoordinatorSettings;
+  customEndpoints: CustomEndpointInfo[];
   pendingProposals: PendingProposal[];
   loaded: boolean;
   refresh: () => Promise<void>;
@@ -59,6 +94,12 @@ interface SettingsState {
   setAgentModel: (agentId: "analyzer" | "reviewer" | "risk_manager", providerId: string, modelId: string) => Promise<void>;
   connectProvider: (providerId: string, credentials: { apiKey?: string; baseUrl?: string }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<void>;
+  updateLiveTradeSettings: (settings: Partial<LiveTradeSettings>) => Promise<void>;
+  updateAiExitSettings: (settings: Partial<AiExitSettings>) => Promise<void>;
+  updateDrawdownGuardSettings: (settings: Partial<DrawdownGuardSettings>) => Promise<void>;
+  updateCoordinatorSettings: (settings: Partial<CoordinatorSettings>) => Promise<void>;
+  addCustomEndpoint: (input: { displayName: string; baseUrl: string; apiKey?: string; modelName: string }) => Promise<void>;
+  removeCustomEndpoint: (id: string) => Promise<void>;
 }
 
 // All available providers - shown in UI even when not connected
@@ -124,21 +165,54 @@ const INITIAL_RISK_LIMITS: RiskLimits = {
 
 const INITIAL_PROPOSALS: PendingProposal[] = [];
 
+const INITIAL_LIVE_TRADE: LiveTradeSettings = {
+  mode: "paper",
+  slippageThreshold: 0.02,
+  maxSlippage: 0.03,
+  limitOrderTimeoutSec: 60,
+};
+
+const INITIAL_AI_EXIT: AiExitSettings = {
+  enabled: true,
+  intervalSec: 180,
+};
+
+const INITIAL_DRAWDOWN_GUARD: DrawdownGuardSettings = {
+  enabled: true,
+  minProfitPct: 0.05,
+  maxDrawdownFromPeak: 0.40,
+};
+
+const INITIAL_COORDINATOR: CoordinatorSettings = {
+  actionable: true,
+  intervalMin: 30,
+};
+
 export const useSettings = create<SettingsState>((set) => ({
   providers: INITIAL_PROVIDERS,
   agentModels: INITIAL_AGENT_MODELS,
   thresholds: INITIAL_THRESHOLDS,
   riskLimits: INITIAL_RISK_LIMITS,
+  liveTradeSettings: INITIAL_LIVE_TRADE,
+  aiExitSettings: INITIAL_AI_EXIT,
+  drawdownGuardSettings: INITIAL_DRAWDOWN_GUARD,
+  coordinatorSettings: INITIAL_COORDINATOR,
+  customEndpoints: [],
   pendingProposals: INITIAL_PROPOSALS,
   loaded: false,
 
   refresh: async () => {
     if (!isElectron()) return;
     try {
-      const [providers, proposals, config] = await Promise.all([
+      const [providers, proposals, config, liveTradeConfig, aiExitConfig, drawdownGuardConfig, coordinatorConfig, customEndpoints] = await Promise.all([
         pmt.listProviders(),
         pmt.getPendingProposals(),
         pmt.getConfig(),
+        pmt.getLiveTradeConfig(),
+        pmt.getAiExitConfig(),
+        pmt.getDrawdownGuardConfig(),
+        pmt.getCoordinatorConfig(),
+        pmt.listCustomEndpoints(),
       ]);
 
     // Merge connected providers with initial provider list
@@ -228,6 +302,13 @@ export const useSettings = create<SettingsState>((set) => ({
       }
     }
 
+    // Update new configs
+    updates.liveTradeSettings = liveTradeConfig as LiveTradeSettings;
+    updates.aiExitSettings = aiExitConfig as AiExitSettings;
+    updates.drawdownGuardSettings = drawdownGuardConfig as DrawdownGuardSettings;
+    updates.coordinatorSettings = coordinatorConfig as CoordinatorSettings;
+    updates.customEndpoints = customEndpoints as CustomEndpointInfo[];
+
     set(updates);
     } catch (err) {
       console.error("[settings] refresh failed:", err);
@@ -288,6 +369,60 @@ export const useSettings = create<SettingsState>((set) => ({
     if (isElectron()) {
       await pmt.disconnectProvider(providerId);
       // Refresh providers list after disconnection
+      await useSettings.getState().refresh();
+    }
+  },
+
+  updateLiveTradeSettings: async (settings) => {
+    set((state) => {
+      const updated = { ...state.liveTradeSettings, ...settings };
+      if (isElectron()) {
+        void pmt.setLiveTradeConfig(updated);
+      }
+      return { liveTradeSettings: updated };
+    });
+  },
+
+  updateAiExitSettings: async (settings) => {
+    set((state) => {
+      const updated = { ...state.aiExitSettings, ...settings };
+      if (isElectron()) {
+        void pmt.setAiExitConfig(updated);
+      }
+      return { aiExitSettings: updated };
+    });
+  },
+
+  updateDrawdownGuardSettings: async (settings) => {
+    set((state) => {
+      const updated = { ...state.drawdownGuardSettings, ...settings };
+      if (isElectron()) {
+        void pmt.setDrawdownGuardConfig(updated);
+      }
+      return { drawdownGuardSettings: updated };
+    });
+  },
+
+  updateCoordinatorSettings: async (settings) => {
+    set((state) => {
+      const updated = { ...state.coordinatorSettings, ...settings };
+      if (isElectron()) {
+        void pmt.setCoordinatorConfig(updated);
+      }
+      return { coordinatorSettings: updated };
+    });
+  },
+
+  addCustomEndpoint: async (input) => {
+    if (isElectron()) {
+      await pmt.addCustomEndpoint(input);
+      await useSettings.getState().refresh();
+    }
+  },
+
+  removeCustomEndpoint: async (id) => {
+    if (isElectron()) {
+      await pmt.removeCustomEndpoint(id);
       await useSettings.getState().refresh();
     }
   },

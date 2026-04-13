@@ -1,5 +1,6 @@
 import type { TraderConfig } from "../config/schema.js";
 import type { SignalLogRow, ExitReason } from "../db/types.js";
+import type { DrawdownGuard } from "./drawdown-guard.js";
 
 export interface ExitContext {
   currentPrice: number;
@@ -14,7 +15,8 @@ export interface ExitDecision {
 export function evaluateExit(
   position: SignalLogRow,
   ctx: ExitContext,
-  cfg: TraderConfig
+  cfg: TraderConfig,
+  drawdownGuard?: DrawdownGuard
 ): ExitDecision {
   const secToResolve = Math.floor((position.resolves_at - ctx.nowMs) / 1000);
   if (secToResolve <= cfg.expirySafetyBufferSec) {
@@ -32,6 +34,13 @@ export function evaluateExit(
   }
   if (profitDelta >= cfg.takeProfitPct) {
     return { exit: true, reason: "A_TP" };
+  }
+
+  if (drawdownGuard) {
+    drawdownGuard.onPriceTick(position.signal_id, profitDelta);
+    if (drawdownGuard.shouldExit(position.signal_id, profitDelta)) {
+      return { exit: true, reason: "DRAWDOWN_GUARD" };
+    }
   }
 
   const holdingSec = Math.floor((ctx.nowMs - position.triggered_at) / 1000);

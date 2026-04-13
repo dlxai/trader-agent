@@ -17,6 +17,7 @@ import {
   createEventBus,
   createCollector,
   createExecutor,
+  createPaperFiller,
   createSignalLogRepo,
   createPortfolioStateRepo,
   loadConfig,
@@ -36,7 +37,8 @@ import {
   type TriggerEvent,
   type VerdictEvent,
 } from "@pmt/engine";
-import { createProviderRegistry, type ProviderRegistry } from "@pmt/llm";
+import { createProviderRegistry, createPositionEvaluatorRunner, type ProviderRegistry } from "@pmt/llm";
+import { createPositionEvaluatorLoop } from "@pmt/engine";
 import { getLogger } from "./logger.js";
 
 // Derive the better-sqlite3 Database type from the engine factory so that
@@ -166,13 +168,34 @@ export async function bootEngine(): Promise<EngineContext> {
   // Set proxy URL in config for collector HTTP fallback
   config.proxyUrl = proxyUrl;
 
+  const filler = createPaperFiller({ slippagePct: config.paperSlippagePct });
   const executor = createExecutor({
     config,
     bus,
     signalRepo,
     portfolioRepo,
+    filler,
     logger: noopLogger,
   });
+
+  // Position evaluator loop
+  if (config.aiExit.enabled) {
+    const peRunner = createPositionEvaluatorRunner({ registry });
+    const positionEvaluatorLoop = createPositionEvaluatorLoop({
+      intervalSec: config.aiExit.intervalSec,
+      getOpenPositions: () => executor.openPositions(),
+      evaluate: (account, positions) => peRunner.evaluate(account, positions),
+      onAction: (action) => {
+        if (action.action === "close") {
+          const pos = executor.openPositions().find((p) => p.signal_id === action.signal_id);
+          if (pos) {
+            void executor.closePosition(pos, pos.entry_price, Date.now(), "AI_EXIT");
+          }
+        }
+      },
+    });
+    positionEvaluatorLoop.start();
+  }
 
   logger.info(`[lifecycle] Creating collector with proxyUrl: ${proxyUrl || 'none'}`);
 
@@ -265,7 +288,7 @@ export async function bootEngine(): Promise<EngineContext> {
 
   // Step 2: Subscribe to Verdicts, send to Executor
   bus.onVerdict((verdict) => {
-    executor.handleVerdict(verdict);
+    void executor.handleVerdict(verdict);
   });
 
   activeContext = {

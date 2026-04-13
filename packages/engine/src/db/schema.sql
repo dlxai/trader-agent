@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS signal_log (
   llm_reasoning TEXT NOT NULL,
   exit_at INTEGER,
   exit_price REAL,
-  exit_reason TEXT CHECK (exit_reason IN ('E', 'A_SL', 'A_TP', 'D', 'C') OR exit_reason IS NULL),
+  exit_reason TEXT CHECK (exit_reason IN ('E', 'A_SL', 'A_TP', 'D', 'C', 'AI_EXIT', 'DRAWDOWN_GUARD', 'COORD_EMERGENCY') OR exit_reason IS NULL),
   pnl_gross_usdc REAL,
   fees_usdc REAL,
   slippage_usdc REAL,

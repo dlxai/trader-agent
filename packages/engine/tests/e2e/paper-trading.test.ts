@@ -6,6 +6,7 @@ import { createPortfolioStateRepo } from "../../src/db/portfolio-state-repo.js";
 import { createEventBus } from "../../src/bus/events.js";
 import { createCollector } from "../../src/collector/collector.js";
 import { createExecutor } from "../../src/executor/executor.js";
+import { createPaperFiller } from "../../src/executor/paper-fill.js";
 import { DEFAULT_CONFIG } from "../../src/config/defaults.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -38,14 +39,15 @@ describe("E2E paper trading", () => {
     const logger = { info: () => {}, warn: () => {}, error: () => {} };
 
     // Build the executor first so the closure below can reference it
-    const exec = createExecutor({ config: DEFAULT_CONFIG, bus, signalRepo, portfolioRepo, logger });
+    const filler = createPaperFiller({ slippagePct: DEFAULT_CONFIG.paperSlippagePct });
+    const exec = createExecutor({ config: DEFAULT_CONFIG, bus, signalRepo, portfolioRepo, filler, logger });
 
     // Stub Analyzer: always approves with high confidence, follows trigger direction
     bus.onTrigger((trigger) => {
       // Skip the executor's own internal reverse-signal listener by not
       // double-firing — the test only stubs an Analyzer, the Executor's D-rule
       // listener is already wired by createExecutor
-      exec.handleVerdict({
+      void exec.handleVerdict({
         type: "verdict",
         trigger,
         verdict: "real_signal",
@@ -98,7 +100,7 @@ describe("E2E paper trading", () => {
 
     // Simulate price ticks that should close all open positions via A-TP (+15%)
     for (const pos of [...openAfterFixture]) {
-      exec.onPriceTick(pos.market_id, pos.entry_price * 1.15, lastTradeMs + 1000);
+      await exec.onPriceTick(pos.market_id, pos.entry_price * 1.15, lastTradeMs + 1000);
     }
 
     expect(exec.openPositions()).toHaveLength(0);

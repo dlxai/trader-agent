@@ -1,4 +1,4 @@
-export type AgentId = "analyzer" | "reviewer" | "risk_manager";
+export type AgentId = "analyzer" | "reviewer" | "risk_manager" | "position_evaluator";
 
 export type ProviderId =
   // OpenAI-compatible API key providers

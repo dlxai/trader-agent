@@ -16,9 +16,17 @@ export interface SystemStateSnapshot {
   openPositionCount: number;
 }
 
+export interface CoordinatorAction {
+  type: "emergency_close" | "adjust_exit" | "pause_new_entry" | "resume_entry";
+  signal_id?: string;
+  new_stop_loss_pct?: number;
+  reason: string;
+}
+
 export interface CoordinatorBrief {
   summary: string;
   alerts: Array<{ severity: "info" | "warning" | "critical"; text: string }>;
+  actions: CoordinatorAction[];
   suggestions: string[];
 }
 
@@ -106,9 +114,15 @@ function parseBrief(text: string): CoordinatorBrief | null {
     if (typeof o.summary !== "string") return null;
     const alerts = Array.isArray(o.alerts) ? (o.alerts as any[]) : [];
     const suggestions = Array.isArray(o.suggestions) ? (o.suggestions as any[]) : [];
+    const VALID_ACTION_TYPES = new Set(["emergency_close", "adjust_exit", "pause_new_entry", "resume_entry"]);
+    const rawActions = Array.isArray(o.actions) ? (o.actions as any[]) : [];
+    const actions: CoordinatorAction[] = rawActions.filter(
+      (a) => a && VALID_ACTION_TYPES.has(a.type) && typeof a.reason === "string"
+    );
     return {
       summary: o.summary,
       alerts: alerts.filter((a) => a && typeof a.severity === "string" && typeof a.text === "string"),
+      actions,
       suggestions: suggestions.filter((s) => typeof s === "string"),
     };
   } catch {

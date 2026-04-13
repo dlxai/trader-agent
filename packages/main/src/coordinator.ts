@@ -1,9 +1,10 @@
-import type { CoordinatorBrief } from "@pmt/llm";
+import type { CoordinatorBrief, CoordinatorAction } from "@pmt/llm";
 
 export interface CoordinatorSchedulerDeps {
   intervalMs: number;
   generateBrief: () => Promise<CoordinatorBrief | null>;
   onBrief: (brief: CoordinatorBrief) => void;
+  onAction?: (action: CoordinatorAction) => Promise<void>;
 }
 
 export interface CoordinatorScheduler {
@@ -18,7 +19,18 @@ export function createCoordinatorScheduler(deps: CoordinatorSchedulerDeps): Coor
   async function runOnce(): Promise<CoordinatorBrief | null> {
     try {
       const brief = await deps.generateBrief();
-      if (brief) deps.onBrief(brief);
+      if (brief) {
+        deps.onBrief(brief);
+        if (deps.onAction && brief.actions && brief.actions.length > 0) {
+          for (const action of brief.actions) {
+            try {
+              await deps.onAction(action);
+            } catch (err) {
+              console.error(`[coordinator] action ${action.type} failed:`, err);
+            }
+          }
+        }
+      }
       return brief;
     } catch (err) {
       console.error("[coordinator] run failed:", err);

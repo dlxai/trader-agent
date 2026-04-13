@@ -34,6 +34,6 @@ export type { AnalyzerRunner, ParsedVerdict, TriggerEvent } from "./runners/anal
 export { createReviewerRunner } from "./runners/reviewer-runner.js";
 export type { ReviewerRunner, ReviewerInput, BucketStat } from "./runners/reviewer-runner.js";
 export { createRiskMgrRunner } from "./runners/risk-mgr-runner.js";
-export type { RiskMgrRunner, CoordinatorBrief, SystemStateSnapshot } from "./runners/risk-mgr-runner.js";
+export type { RiskMgrRunner, CoordinatorBrief, CoordinatorAction, SystemStateSnapshot } from "./runners/risk-mgr-runner.js";
 
 export const PACKAGE_NAME = "@pmt/llm";

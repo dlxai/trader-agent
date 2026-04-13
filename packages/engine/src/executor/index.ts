@@ -9,3 +9,6 @@ export * from "./conflict-lock.js";
 export * from "./executor.js";
 export * from "./price-bucket.js";
 export * from "./drawdown-guard.js";
+export * from "./clob-order-service.js";
+export * from "./live-filler.js";
+export * from "./position-evaluator.js";

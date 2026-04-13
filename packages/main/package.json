@@ -18,7 +18,9 @@
   },
   "dependencies": {
     "@pmt/engine": "workspace:*",
-    "@pmt/llm": "workspace:*"
+    "@pmt/llm": "workspace:*",
+    "@polymarket/clob-client-v2": "^0.2.6",
+    "viem": "^2.47.12"
   },
   "devDependencies": {
     "electron": "^30.0.0",

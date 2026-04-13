@@ -38,7 +38,8 @@ import {
   type VerdictEvent,
 } from "@pmt/engine";
 import { createProviderRegistry, createPositionEvaluatorRunner, type ProviderRegistry } from "@pmt/llm";
-import { createPositionEvaluatorLoop } from "@pmt/engine";
+import { createPositionEvaluatorLoop, createLiveFiller, type OrderFiller } from "@pmt/engine";
+import { createClobOrderService } from "./clob-client.js";
 import { getLogger } from "./logger.js";
 
 // Derive the better-sqlite3 Database type from the engine factory so that
@@ -168,7 +169,46 @@ export async function bootEngine(): Promise<EngineContext> {
   // Set proxy URL in config for collector HTTP fallback
   config.proxyUrl = proxyUrl;
 
-  const filler = createPaperFiller({ slippagePct: config.paperSlippagePct });
+  // Select filler: live CLOB or paper simulation
+  let filler: OrderFiller;
+  if (config.liveTrade.mode === "live") {
+    try {
+      // Read wallet credentials from secrets store
+      const privateKey = process.env.POLYMARKET_PRIVATE_KEY;
+      const funderAddress = process.env.POLYMARKET_FUNDER_ADDRESS;
+      // Also try database
+      const liveRow = db.prepare("SELECT value FROM filter_config WHERE key = 'live_trade_config'").get() as { value: string } | undefined;
+      const liveConfig = liveRow ? JSON.parse(liveRow.value) : {};
+
+      const pk = privateKey ?? liveConfig.privateKey;
+      const funder = funderAddress ?? liveConfig.funderAddress;
+
+      if (pk && funder) {
+        const clobService = createClobOrderService({
+          privateKey: pk,
+          funderAddress: funder,
+          chainId: 137,
+        });
+        await clobService.initialize();
+        filler = createLiveFiller({
+          clob: clobService,
+          slippageThreshold: config.liveTrade.slippageThreshold,
+          maxSlippage: config.liveTrade.maxSlippage,
+          limitOrderTimeoutSec: config.liveTrade.limitOrderTimeoutSec,
+        });
+        logger.info("[lifecycle] Live trading mode enabled");
+      } else {
+        logger.warn("[lifecycle] Live mode configured but credentials missing, falling back to paper");
+        filler = createPaperFiller({ slippagePct: config.paperSlippagePct });
+      }
+    } catch (err) {
+      logger.error(`[lifecycle] Failed to initialize live trading: ${err}`);
+      filler = createPaperFiller({ slippagePct: config.paperSlippagePct });
+    }
+  } else {
+    filler = createPaperFiller({ slippagePct: config.paperSlippagePct });
+  }
+
   const executor = createExecutor({
     config,
     bus,

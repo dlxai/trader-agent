@@ -35,5 +35,7 @@ export { createReviewerRunner } from "./runners/reviewer-runner.js";
 export type { ReviewerRunner, ReviewerInput, BucketStat } from "./runners/reviewer-runner.js";
 export { createRiskMgrRunner } from "./runners/risk-mgr-runner.js";
 export type { RiskMgrRunner, CoordinatorBrief, CoordinatorAction, SystemStateSnapshot } from "./runners/risk-mgr-runner.js";
+export { createPositionEvaluatorRunner } from "./runners/position-evaluator-runner.js";
+export type { PositionEvaluatorRunner, PositionSnapshot, AccountSummary, PositionAction, PositionEvaluation } from "./runners/position-evaluator-runner.js";
 
 export const PACKAGE_NAME = "@pmt/llm";

@@ -901,6 +901,96 @@ export function registerIpcHandlers(deps: IpcDeps): void {
     return { success: true };
   });
 
+  // Live trade config
+  ipcMain.handle("pmt:getLiveTradeConfig", () => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return { mode: "paper", slippageThreshold: 0.02, maxSlippage: 0.03, limitOrderTimeoutSec: 60 };
+    const row = ctx.db.prepare("SELECT value FROM filter_config WHERE key = 'live_trade_config'").get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : { mode: "paper", slippageThreshold: 0.02, maxSlippage: 0.03, limitOrderTimeoutSec: 60 };
+  });
+
+  ipcMain.handle("pmt:setLiveTradeConfig", async (_event, config) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    ctx.db.prepare("INSERT OR REPLACE INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?)")
+      .run("live_trade_config", JSON.stringify(config), Date.now(), "user");
+    return { success: true };
+  });
+
+  // AI Exit config
+  ipcMain.handle("pmt:getAiExitConfig", () => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return { enabled: true, intervalSec: 180 };
+    const row = ctx.db.prepare("SELECT value FROM filter_config WHERE key = 'ai_exit_config'").get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : { enabled: true, intervalSec: 180 };
+  });
+
+  ipcMain.handle("pmt:setAiExitConfig", async (_event, config) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    ctx.db.prepare("INSERT OR REPLACE INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?)")
+      .run("ai_exit_config", JSON.stringify(config), Date.now(), "user");
+    return { success: true };
+  });
+
+  // Drawdown guard config
+  ipcMain.handle("pmt:getDrawdownGuardConfig", () => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return { enabled: true, minProfitPct: 0.05, maxDrawdownFromPeak: 0.40 };
+    const row = ctx.db.prepare("SELECT value FROM filter_config WHERE key = 'drawdown_guard_config'").get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : { enabled: true, minProfitPct: 0.05, maxDrawdownFromPeak: 0.40 };
+  });
+
+  ipcMain.handle("pmt:setDrawdownGuardConfig", async (_event, config) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    ctx.db.prepare("INSERT OR REPLACE INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?)")
+      .run("drawdown_guard_config", JSON.stringify(config), Date.now(), "user");
+    return { success: true };
+  });
+
+  // Coordinator config
+  ipcMain.handle("pmt:getCoordinatorConfig", () => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return { actionable: true, intervalMin: 30 };
+    const row = ctx.db.prepare("SELECT value FROM filter_config WHERE key = 'coordinator_config'").get() as { value: string } | undefined;
+    return row ? JSON.parse(row.value) : { actionable: true, intervalMin: 30 };
+  });
+
+  ipcMain.handle("pmt:setCoordinatorConfig", async (_event, config) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    ctx.db.prepare("INSERT OR REPLACE INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?)")
+      .run("coordinator_config", JSON.stringify(config), Date.now(), "user");
+    return { success: true };
+  });
+
+  // Custom OpenAI endpoints
+  ipcMain.handle("pmt:listCustomEndpoints", () => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) return [];
+    const rows = ctx.db.prepare("SELECT value FROM filter_config WHERE key LIKE 'custom_endpoint_%'").all() as Array<{ value: string }>;
+    return rows.map(r => JSON.parse(r.value));
+  });
+
+  ipcMain.handle("pmt:addCustomEndpoint", async (_event, input) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    const sanitized = input.displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/_+$/, "");
+    const id = `custom_${sanitized}_${Date.now()}`;
+    const config = { id, ...input };
+    ctx.db.prepare("INSERT OR REPLACE INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?)")
+      .run(`custom_endpoint_${id}`, JSON.stringify(config), Date.now(), "user");
+    return { success: true, providerId: id };
+  });
+
+  ipcMain.handle("pmt:removeCustomEndpoint", async (_event, id) => {
+    const ctx = deps.getEngineContext();
+    if (!ctx) throw new Error("engine not running");
+    ctx.db.prepare("DELETE FROM filter_config WHERE key = ?").run(`custom_endpoint_${id}`);
+    return { success: true };
+  });
+
   // Logging
   ipcMain.handle("getLogDir", async () => {
     return getLogDir();

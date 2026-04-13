@@ -175,6 +175,16 @@ async function onReady(): Promise<void> {
           },
         });
       },
+      ...(ctx.config.coordinator.actionable ? {
+        onAction: async (action: import("@pmt/llm").CoordinatorAction) => {
+          if (action.type === "emergency_close" && action.signal_id) {
+            const pos = ctx.executor.openPositions().find((p) => p.signal_id === action.signal_id);
+            if (pos) {
+              await ctx.executor.closePosition(pos, pos.entry_price, Date.now(), "COORD_EMERGENCY");
+            }
+          }
+        },
+      } : {}),
       onBrief: (brief) => {
         // Persist to coordinator_log
         ctx.db

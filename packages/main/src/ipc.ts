@@ -904,16 +904,47 @@ export function registerIpcHandlers(deps: IpcDeps): void {
   // Live trade config
   ipcMain.handle("pmt:getLiveTradeConfig", () => {
     const ctx = deps.getEngineContext();
-    if (!ctx) return { mode: "paper", slippageThreshold: 0.02, maxSlippage: 0.03, limitOrderTimeoutSec: 60 };
+    const defaults = { mode: "paper", slippageThreshold: 0.02, maxSlippage: 0.03, limitOrderTimeoutSec: 60 };
+    if (!ctx) return defaults;
     const row = ctx.db.prepare("SELECT value FROM filter_config WHERE key = 'live_trade_config'").get() as { value: string } | undefined;
-    return row ? JSON.parse(row.value) : { mode: "paper", slippageThreshold: 0.02, maxSlippage: 0.03, limitOrderTimeoutSec: 60 };
+    if (!row) return defaults;
+    // Return only non-sensitive fields — never expose privateKey or funderAddress
+    const stored = JSON.parse(row.value) as Record<string, unknown>;
+    return {
+      mode: stored.mode ?? defaults.mode,
+      slippageThreshold: stored.slippageThreshold ?? defaults.slippageThreshold,
+      maxSlippage: stored.maxSlippage ?? defaults.maxSlippage,
+      limitOrderTimeoutSec: stored.limitOrderTimeoutSec ?? defaults.limitOrderTimeoutSec,
+    };
   });
 
   ipcMain.handle("pmt:setLiveTradeConfig", async (_event, config) => {
     const ctx = deps.getEngineContext();
     if (!ctx) throw new Error("engine not running");
+
+    // Extract sensitive credentials and store them securely
+    const { privateKey, funderAddress, ...safeConfig } = config as {
+      privateKey?: string;
+      funderAddress?: string;
+      [key: string]: unknown;
+    };
+
+    if (privateKey || funderAddress) {
+      const { createSecretStore } = await import("./secrets.js");
+      const secrets = createSecretStore();
+      if (privateKey) await secrets.set("live_trade_privateKey", privateKey);
+      if (funderAddress) await secrets.set("live_trade_funderAddress", funderAddress);
+    }
+
+    // Only persist non-sensitive fields to the database
+    const dbConfig = {
+      mode: safeConfig.mode,
+      slippageThreshold: safeConfig.slippageThreshold,
+      maxSlippage: safeConfig.maxSlippage,
+      limitOrderTimeoutSec: safeConfig.limitOrderTimeoutSec,
+    };
     ctx.db.prepare("INSERT OR REPLACE INTO filter_config (key, value, updated_at, source) VALUES (?, ?, ?, ?)")
-      .run("live_trade_config", JSON.stringify(config), Date.now(), "user");
+      .run("live_trade_config", JSON.stringify(dbConfig), Date.now(), "user");
     return { success: true };
   });
 

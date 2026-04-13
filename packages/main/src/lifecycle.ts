@@ -173,15 +173,21 @@ export async function bootEngine(): Promise<EngineContext> {
   let filler: OrderFiller;
   if (config.liveTrade.mode === "live") {
     try {
-      // Read wallet credentials from secrets store
+      // Read wallet credentials: env vars take priority, then secrets store
       const privateKey = process.env.POLYMARKET_PRIVATE_KEY;
       const funderAddress = process.env.POLYMARKET_FUNDER_ADDRESS;
-      // Also try database
-      const liveRow = db.prepare("SELECT value FROM filter_config WHERE key = 'live_trade_config'").get() as { value: string } | undefined;
-      const liveConfig = liveRow ? JSON.parse(liveRow.value) : {};
 
-      const pk = privateKey ?? liveConfig.privateKey;
-      const funder = funderAddress ?? liveConfig.funderAddress;
+      let secretPk: string | undefined;
+      let secretFunder: string | undefined;
+      if (!privateKey || !funderAddress) {
+        const { createSecretStore } = await import("./secrets.js");
+        const secrets = createSecretStore();
+        if (!privateKey) secretPk = (await secrets.get("live_trade_privateKey")) ?? undefined;
+        if (!funderAddress) secretFunder = (await secrets.get("live_trade_funderAddress")) ?? undefined;
+      }
+
+      const pk = privateKey ?? secretPk;
+      const funder = funderAddress ?? secretFunder;
 
       if (pk && funder) {
         const clobService = createClobOrderService({
@@ -278,10 +284,11 @@ export async function bootEngine(): Promise<EngineContext> {
 
     try {
       const prompt = packContext(trigger);
+      const systemPrompt = getAnalyzerSystemPrompt(config.prompt?.customPrompt);
       const response = await assigned.provider.chat({
         model: assigned.modelId,
         messages: [
-          { role: "system", content: getAnalyzerSystemPrompt() },
+          { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
         ],
         temperature: 0.3,
@@ -291,6 +298,15 @@ export async function bootEngine(): Promise<EngineContext> {
       if (!response) return null;
 
       const parsed = parseVerdict(response.content);
+
+      // Downgrade to "uncertain" if confidence falls below the configured threshold
+      const minConfidence = config.prompt?.minConfidence ?? 0.65;
+      if (parsed.confidence < minConfidence) {
+        logger.info(
+          `[lifecycle] Confidence ${parsed.confidence} below threshold ${minConfidence}, downgrading verdict to uncertain`
+        );
+        parsed.verdict = "uncertain";
+      }
 
       const verdictEvent: VerdictEvent = {
         type: "verdict",
@@ -345,8 +361,8 @@ export async function bootEngine(): Promise<EngineContext> {
   return activeContext;
 }
 
-function getAnalyzerSystemPrompt(): string {
-  return `You are the Polymarket Analyzer. Your job is to assess trading signals.
+function getAnalyzerSystemPrompt(customPrompt?: string): string {
+  const base = `You are the Polymarket Analyzer. Your job is to assess trading signals.
 
 Look for red flags (lean toward noise):
 - Unique traders < 3 with no large order exemption -> likely bots
@@ -368,10 +384,13 @@ Hard constraints:
 Output format:
 {
   "verdict": "real_signal" | "noise" | "uncertain",
-  "direction": "buy_yes" | "buy_no", 
+  "direction": "buy_yes" | "buy_no",
   "confidence": 0.0 to 1.0,
   "reasoning": "brief explanation"
 }`;
+  return customPrompt && customPrompt.trim().length > 0
+    ? `${base}\n\n${customPrompt.trim()}`
+    : base;
 }
 
 /**

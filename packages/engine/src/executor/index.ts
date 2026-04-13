@@ -2,6 +2,7 @@ export * from "./kelly.js";
 export * from "./pnl.js";
 export * from "./circuit-breaker.js";
 export * from "./position-tracker.js";
+export * from "./order-filler.js";
 export * from "./paper-fill.js";
 export * from "./exit-monitor.js";
 export * from "./conflict-lock.js";

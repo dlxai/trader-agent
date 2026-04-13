@@ -104,7 +104,7 @@ export function createCollector(deps: CollectorDeps): Collector {
     if (!snapshot) return;
 
     // Notify executor of price update for position monitoring (stop-loss / take-profit)
-    deps.executor.onPriceTick(trade.marketId, snapshot.currentMidPrice, trade.timestampMs);
+    void deps.executor.onPriceTick(trade.marketId, snapshot.currentMidPrice, trade.timestampMs);
 
     deps.logger.info(`[collector] Evaluating trigger for ${trade.marketId}: netFlow=$${snapshot.window1m.netFlow}, traders=${snapshot.window1m.uniqueTraders}, priceMove=${snapshot.window5m.priceMove}`);
 
@@ -195,7 +195,7 @@ export function createCollector(deps: CollectorDeps): Collector {
       if (deps.clobWsClientFactory && !useHttpFallback) {
         clobWsClient = deps.clobWsClientFactory((marketId, midPrice, timestampMs) => {
           // Notify executor of price update for stop-loss/take-profit
-          deps.executor.onPriceTick(marketId, midPrice, timestampMs);
+          void deps.executor.onPriceTick(marketId, midPrice, timestampMs);
         });
         await clobWsClient.connect();
         

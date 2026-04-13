@@ -17,6 +17,7 @@ import {
   createEventBus,
   createCollector,
   createExecutor,
+  createPaperFiller,
   createSignalLogRepo,
   createPortfolioStateRepo,
   loadConfig,
@@ -166,11 +167,13 @@ export async function bootEngine(): Promise<EngineContext> {
   // Set proxy URL in config for collector HTTP fallback
   config.proxyUrl = proxyUrl;
 
+  const filler = createPaperFiller({ slippagePct: config.paperSlippagePct });
   const executor = createExecutor({
     config,
     bus,
     signalRepo,
     portfolioRepo,
+    filler,
     logger: noopLogger,
   });
 
@@ -265,7 +268,7 @@ export async function bootEngine(): Promise<EngineContext> {
 
   // Step 2: Subscribe to Verdicts, send to Executor
   bus.onVerdict((verdict) => {
-    executor.handleVerdict(verdict);
+    void executor.handleVerdict(verdict);
   });
 
   activeContext = {

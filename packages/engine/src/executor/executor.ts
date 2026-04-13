@@ -3,13 +3,13 @@ import type { EventBus } from "../bus/events.js";
 import type { SignalLogRepo } from "../db/signal-log-repo.js";
 import type { PortfolioStateRepo } from "../db/portfolio-state-repo.js";
 import type { VerdictEvent } from "../bus/types.js";
-import type { NewSignal, SignalLogRow } from "../db/types.js";
+import type { NewSignal, SignalLogRow, ExitReason } from "../db/types.js";
+import type { OrderFiller } from "./order-filler.js";
 import { calculateKellyPosition } from "./kelly.js";
 import { priceBucket, priorWinRate } from "./price-bucket.js";
 import { createPositionTracker } from "./position-tracker.js";
 import { createCircuitBreaker } from "./circuit-breaker.js";
 import { createConflictLock } from "./conflict-lock.js";
-import { createPaperFiller } from "./paper-fill.js";
 import { computePnL } from "./pnl.js";
 import { evaluateExit } from "./exit-monitor.js";
 import { randomUUID } from "node:crypto";
@@ -19,13 +19,15 @@ export interface ExecutorDeps {
   bus: EventBus;
   signalRepo: SignalLogRepo;
   portfolioRepo: PortfolioStateRepo;
+  filler: OrderFiller;
   logger: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void };
 }
 
 export interface Executor {
   /** Returns signal_id on success, null if rejected. */
-  handleVerdict(event: VerdictEvent): string | null;
-  onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): void;
+  handleVerdict(event: VerdictEvent): Promise<string | null>;
+  onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): Promise<void>;
+  closePosition(pos: SignalLogRow, exitMidPrice: number, nowMs: number, reason: ExitReason): Promise<void>;
   openPositions(): SignalLogRow[];
 }
 
@@ -33,7 +35,6 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   const tracker = createPositionTracker({ signalRepo: deps.signalRepo });
   const breaker = createCircuitBreaker({ config: deps.config, portfolioRepo: deps.portfolioRepo });
   const lock = createConflictLock();
-  const filler = createPaperFiller({ slippagePct: deps.config.paperSlippagePct });
 
   // Re-acquire locks for positions loaded from DB on startup
   for (const pos of tracker.listOpen()) lock.tryAcquire(pos.market_id);
@@ -47,7 +48,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
     }
   });
 
-  function handleVerdict(event: VerdictEvent): string | null {
+  async function handleVerdict(event: VerdictEvent): Promise<string | null> {
     if (event.verdict !== "real_signal") {
       deps.logger.info(`[executor] verdict not actionable: ${event.verdict}`);
       return null;
@@ -85,12 +86,19 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       return null;
     }
 
-    // Paper fill at mid + slippage
-    const fill = filler.fillBuy({
+    const fill = await deps.filler.fillBuy({
+      tokenId: event.trigger.market_id,
       midPrice: entryPrice,
       sizeUsdc: kelly.size,
+      direction: event.llm_direction,
       timestampMs: event.trigger.triggered_at,
     });
+
+    if (!fill.filled) {
+      deps.logger.warn(`[executor] fill failed: ${fill.reason}`);
+      lock.release(event.trigger.market_id);
+      return null;
+    }
 
     const newSignal: NewSignal = {
       signal_id: randomUUID(),
@@ -101,7 +109,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       direction: event.llm_direction,
       entry_price: fill.fillPrice,
       price_bucket: bucket,
-      size_usdc: fill.sizeUsdc,
+      size_usdc: fill.filledSize,
       kelly_fraction: kelly.kellyFraction,
       snapshot_volume_1m: event.trigger.snapshot.volume_1m,
       snapshot_net_flow_1m: event.trigger.snapshot.net_flow_1m,
@@ -113,43 +121,51 @@ export function createExecutor(deps: ExecutorDeps): Executor {
       llm_reasoning: event.reasoning,
     };
     tracker.open(newSignal);
-    deps.logger.info(`[executor] opened position ${newSignal.signal_id} size=$${kelly.size}`);
+    deps.logger.info(`[executor] opened position ${newSignal.signal_id} size=$${fill.filledSize}`);
     return newSignal.signal_id;
   }
 
-  function onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): void {
+  async function onPriceTick(marketId: string, currentMidPrice: number, nowMs: number): Promise<void> {
     for (const pos of tracker.listOpen()) {
       if (pos.market_id !== marketId) continue;
       const decision = evaluateExit(pos, { currentPrice: currentMidPrice, nowMs }, deps.config);
       if (decision.exit && decision.reason) {
-        closePosition(pos, currentMidPrice, nowMs, decision.reason);
+        await closePosition(pos, currentMidPrice, nowMs, decision.reason);
       }
     }
   }
 
-  function closePosition(
+  async function closePosition(
     pos: SignalLogRow,
     exitMidPrice: number,
     nowMs: number,
-    reason: "E" | "A_SL" | "A_TP" | "D" | "C"
-  ): void {
-    const fill = filler.fillSell({
+    reason: ExitReason
+  ): Promise<void> {
+    const fill = await deps.filler.fillSell({
+      tokenId: pos.market_id,
       midPrice: exitMidPrice,
       sizeUsdc: pos.size_usdc,
+      direction: pos.direction,
       timestampMs: nowMs,
     });
+
+    if (!fill.filled) {
+      deps.logger.warn(`[executor] sell fill failed for ${pos.signal_id}: ${fill.reason}`);
+    }
+
+    const exitPrice = fill.filled ? fill.fillPrice : exitMidPrice;
     const pnl = computePnL({
       direction: pos.direction,
       sizeUsdc: pos.size_usdc,
       entryPrice: pos.entry_price,
-      exitPrice: fill.fillPrice,
+      exitPrice,
       feePct: 0,
       slippagePct: deps.config.paperSlippagePct,
       gasUsdc: deps.config.gasPerTradeUsdc,
     });
     tracker.close(pos.signal_id, {
       exit_at: nowMs,
-      exit_price: fill.fillPrice,
+      exit_price: exitPrice,
       exit_reason: reason,
       pnl_gross_usdc: pnl.pnlGross,
       fees_usdc: pnl.fees,
@@ -172,6 +188,7 @@ export function createExecutor(deps: ExecutorDeps): Executor {
   return {
     handleVerdict,
     onPriceTick,
+    closePosition,
     openPositions: () => tracker.listOpen(),
   };
 }

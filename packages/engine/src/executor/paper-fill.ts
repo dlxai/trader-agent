@@ -1,38 +1,25 @@
+import type { OrderFiller, FillParams, FillResult } from "./order-filler.js";
+
 export interface PaperFillOptions {
   slippagePct: number;
 }
 
-export interface PaperFillRequest {
-  midPrice: number;
-  sizeUsdc: number;
-  timestampMs: number;
-}
-
-export interface PaperFillResult {
-  fillPrice: number;
-  sizeUsdc: number;
-  timestampMs: number;
-}
-
-export interface PaperFiller {
-  fillBuy(req: PaperFillRequest): PaperFillResult;
-  fillSell(req: PaperFillRequest): PaperFillResult;
-}
-
-export function createPaperFiller(opts: PaperFillOptions): PaperFiller {
+export function createPaperFiller(opts: PaperFillOptions): OrderFiller {
   return {
-    fillBuy(req) {
+    async fillBuy(params: FillParams): Promise<FillResult> {
       return {
-        fillPrice: req.midPrice * (1 + opts.slippagePct),
-        sizeUsdc: req.sizeUsdc,
-        timestampMs: req.timestampMs,
+        filled: true,
+        fillPrice: params.midPrice * (1 + opts.slippagePct),
+        filledSize: params.sizeUsdc,
+        reason: "filled",
       };
     },
-    fillSell(req) {
+    async fillSell(params: FillParams): Promise<FillResult> {
       return {
-        fillPrice: req.midPrice * (1 - opts.slippagePct),
-        sizeUsdc: req.sizeUsdc,
-        timestampMs: req.timestampMs,
+        filled: true,
+        fillPrice: params.midPrice * (1 - opts.slippagePct),
+        filledSize: params.sizeUsdc,
+        reason: "filled",
       };
     },
   };

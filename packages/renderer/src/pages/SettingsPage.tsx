@@ -819,11 +819,84 @@ export function SettingsPage() {
               />
               <span style={{ fontWeight: theme.font.weights.medium }}>
                 Live Trading {liveTradeSettings.mode === "live"
-                  ? <span style={{ color: "#e53e3e", fontSize: 12, marginLeft: 4 }}>(LIVE)</span>
+                  ? <span style={{ color: "#e53e3e", fontSize: 12, marginLeft: 4 }}>(LIVE - Real Money)</span>
                   : <span style={{ color: theme.colors.coolGray, fontSize: 12, marginLeft: 4 }}>(Paper)</span>}
               </span>
             </label>
           </div>
+
+          {/* Wallet Credentials (only shown in live mode) */}
+          {liveTradeSettings.mode === "live" && (
+            <div style={{ marginBottom: 16, padding: 12, background: "#fff5f5", borderRadius: 8, border: "1px solid #fed7d7" }}>
+              <div style={{ fontSize: 12, color: "#e53e3e", fontWeight: theme.font.weights.bold, marginBottom: 8 }}>
+                Wallet Credentials (stored securely in OS keychain)
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>Wallet Private Key</div>
+                  <input
+                    type="password"
+                    placeholder="0x..."
+                    style={{
+                      width: "100%",
+                      padding: "8px 12px",
+                      border: `1px solid ${theme.colors.borderGray}`,
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontFamily: "monospace",
+                      boxSizing: "border-box",
+                    }}
+                    onBlur={(e) => {
+                      const val = e.target.value.trim();
+                      if (val) {
+                        void updateLiveTradeSettings({ privateKey: val } as any);
+                        e.target.value = "";
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                  />
+                  <div style={{ fontSize: 11, color: theme.colors.coolGray, marginTop: 2 }}>
+                    Enter and press Tab/Enter to save. Value is not displayed after saving.
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>Proxy Funder Address</div>
+                  <input
+                    type="text"
+                    placeholder="0x... (Polymarket proxy wallet address)"
+                    style={{
+                      width: "100%",
+                      padding: "8px 12px",
+                      border: `1px solid ${theme.colors.borderGray}`,
+                      borderRadius: 6,
+                      fontSize: 13,
+                      fontFamily: "monospace",
+                      boxSizing: "border-box",
+                    }}
+                    onBlur={(e) => {
+                      const val = e.target.value.trim();
+                      if (val) {
+                        void updateLiveTradeSettings({ funderAddress: val } as any);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                  />
+                  <div style={{ fontSize: 11, color: theme.colors.coolGray, marginTop: 2 }}>
+                    Your Polymarket proxy contract address (signature_type=2)
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, fontSize: 13 }}>
             <div>
               <div style={{ color: theme.colors.coolGray, marginBottom: 4 }}>Slippage Threshold (%)</div>

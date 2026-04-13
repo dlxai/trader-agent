@@ -1,5 +1,5 @@
 export type Direction = "buy_yes" | "buy_no";
-export type ExitReason = "E" | "A_SL" | "A_TP" | "D" | "C";
+export type ExitReason = "E" | "A_SL" | "A_TP" | "D" | "C" | "AI_EXIT" | "COORD_EMERGENCY" | "DRAWDOWN_GUARD";
 export type LlmVerdict = "real_signal" | "noise" | "uncertain";
 
 export interface SignalLogRow {

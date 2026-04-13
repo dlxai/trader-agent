@@ -42,4 +42,34 @@ export const DEFAULT_CONFIG: TraderConfig = {
   llmTimeoutMs: 30_000,
   // Analyzer LLM model (default to Claude Opus for best reasoning)
   analyzerModel: "claude-opus-4",
+  // Live trading
+  liveTrade: {
+    mode: "paper",
+    slippageThreshold: 0.02,
+    maxSlippage: 0.03,
+    limitOrderTimeoutSec: 60,
+  },
+  // AI position evaluator
+  aiExit: {
+    enabled: true,
+    intervalSec: 180,
+  },
+  // Drawdown guard
+  drawdownGuard: {
+    enabled: true,
+    minProfitPct: 0.05,
+    maxDrawdownFromPeak: 0.40,
+  },
+  // Coordinator
+  coordinator: {
+    actionable: true,
+    intervalMin: 30,
+  },
+  // Prompt configuration
+  prompt: {
+    tradingMode: "balanced",
+    customPrompt: "",
+    minConfidence: 0.65,
+    minEdge: 0.06,
+  },
 };

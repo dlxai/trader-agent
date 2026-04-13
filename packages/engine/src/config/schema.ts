@@ -50,4 +50,44 @@ export interface TraderConfig {
   // LLM (§7.1 Analyzer)
   llmTimeoutMs: number;             // 30000
   analyzerModel?: string;           // Model for Analyzer agent (default: claude-opus-4)
+  // Live trading
+  liveTrade: LiveTradeConfig;
+  // AI position evaluator
+  aiExit: AiExitConfig;
+  // Drawdown guard
+  drawdownGuard: DrawdownGuardConfig;
+  // Coordinator
+  coordinator: CoordinatorConfig;
+  // Prompt configuration
+  prompt: PromptConfig;
+}
+
+export interface LiveTradeConfig {
+  mode: "paper" | "live";
+  slippageThreshold: number;
+  maxSlippage: number;
+  limitOrderTimeoutSec: number;
+}
+
+export interface AiExitConfig {
+  enabled: boolean;
+  intervalSec: number;
+}
+
+export interface DrawdownGuardConfig {
+  enabled: boolean;
+  minProfitPct: number;
+  maxDrawdownFromPeak: number;
+}
+
+export interface CoordinatorConfig {
+  actionable: boolean;
+  intervalMin: number;
+}
+
+export interface PromptConfig {
+  tradingMode: "conservative" | "balanced" | "aggressive";
+  customPrompt: string;
+  minConfidence: number;
+  minEdge: number;
 }

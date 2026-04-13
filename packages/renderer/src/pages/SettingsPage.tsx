@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { theme } from "../theme.js";
 import { Sidebar } from "../components/Sidebar.js";
-import { ProviderCard } from "../components/ProviderCard.js";
 import { ProposalCard } from "../components/ProposalCard.js";
 import { useSettings, type ProviderInfoUI } from "../stores/settings.js";
-import type { CustomEndpointInfo } from "../stores/settings.js";
 import { pmt, isElectron } from "../ipc-client.js";
 
 const layoutStyle: React.CSSProperties = {
@@ -153,22 +151,10 @@ export function SettingsPage() {
   const aiExitSettings = useSettings((s) => s.aiExitSettings);
   const drawdownGuardSettings = useSettings((s) => s.drawdownGuardSettings);
   const coordinatorSettings = useSettings((s) => s.coordinatorSettings);
-  const customEndpoints = useSettings((s) => s.customEndpoints);
   const updateLiveTradeSettings = useSettings((s) => s.updateLiveTradeSettings);
   const updateAiExitSettings = useSettings((s) => s.updateAiExitSettings);
   const updateDrawdownGuardSettings = useSettings((s) => s.updateDrawdownGuardSettings);
   const updateCoordinatorSettings = useSettings((s) => s.updateCoordinatorSettings);
-  const addCustomEndpoint = useSettings((s) => s.addCustomEndpoint);
-  const removeCustomEndpoint = useSettings((s) => s.removeCustomEndpoint);
-
-  // Custom endpoint form state
-  const [showAddEndpoint, setShowAddEndpoint] = useState(false);
-  const [endpointDisplayName, setEndpointDisplayName] = useState("");
-  const [endpointBaseUrl, setEndpointBaseUrl] = useState("");
-  const [endpointApiKey, setEndpointApiKey] = useState("");
-  const [endpointModelName, setEndpointModelName] = useState("");
-  const [addEndpointError, setAddEndpointError] = useState<string | null>(null);
-  const [addingEndpoint, setAddingEndpoint] = useState(false);
 
   // Proxy configuration state - default enabled with common proxy address
   const [proxyEnabled, setProxyEnabled] = useState(true);
@@ -176,10 +162,14 @@ export function SettingsPage() {
   const [httpsProxy, setHttpsProxy] = useState("http://127.0.0.1:7890");
   const [proxySaved, setProxySaved] = useState(false);
 
-  // Provider configuration dialog state
-  const [configuringProvider, setConfiguringProvider] = useState<ProviderInfoUI | null>(null);
+  // Model config modal state (nofx-style 2-step wizard)
+  const [showModelModal, setShowModelModal] = useState(false);
+  const [modalStep, setModalStep] = useState<0 | 1>(0); // 0=select provider, 1=configure
+  const [selectedProvider, setSelectedProvider] = useState<ProviderInfoUI | null>(null);
+  const [editingProvider, setEditingProvider] = useState<ProviderInfoUI | null>(null); // non-null = edit mode
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [baseUrlInput, setBaseUrlInput] = useState("");
+  const [modelNameInput, setModelNameInput] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
 
@@ -260,51 +250,54 @@ export function SettingsPage() {
     }
   };
 
-  const handleOpenProviderConfig = (provider: ProviderInfoUI) => {
-    console.log("[SettingsPage] Opening config for provider:", provider.id, provider.name, provider.authType);
-    setConfiguringProvider(provider);
+  const openAddModelModal = () => {
+    setShowModelModal(true);
+    setModalStep(0);
+    setSelectedProvider(null);
+    setEditingProvider(null);
     setApiKeyInput("");
     setBaseUrlInput("");
+    setModelNameInput("");
     setConnectError(null);
   };
 
-  const handleConnectProvider = async () => {
-    if (!configuringProvider) return;
+  const openEditModelModal = (provider: ProviderInfoUI) => {
+    setShowModelModal(true);
+    setModalStep(1);
+    setSelectedProvider(provider);
+    setEditingProvider(provider);
+    setApiKeyInput("");
+    setBaseUrlInput("");
+    setModelNameInput("");
+    setConnectError(null);
+  };
 
-    console.log("[SettingsPage] Connecting provider:", configuringProvider.id, "type:", configuringProvider.authType);
+  const handleSelectProvider = (provider: ProviderInfoUI) => {
+    setSelectedProvider(provider);
+    setModalStep(1);
+    setConnectError(null);
+  };
 
-    // Validate input based on provider type
-    if (configuringProvider.authType === "api_key" && !apiKeyInput.trim()) {
-      setConnectError("API key is required");
+  const handleSaveModel = async () => {
+    if (!selectedProvider) return;
+    if (selectedProvider.authType !== "cli_credential" && !apiKeyInput.trim()) {
+      setConnectError("API Key / Token is required");
       return;
     }
-    if (configuringProvider.authType === "cli_credential" && !baseUrlInput.trim()) {
+    if (selectedProvider.authType === "cli_credential" && !baseUrlInput.trim()) {
       setConnectError("Base URL is required");
       return;
     }
-
     setConnecting(true);
     setConnectError(null);
     try {
       const credentials: { apiKey?: string; baseUrl?: string } = {};
-      if (apiKeyInput.trim()) {
-        credentials.apiKey = apiKeyInput.trim();
-      }
-      if (baseUrlInput.trim()) {
-        credentials.baseUrl = baseUrlInput.trim();
-      }
-      console.log("[SettingsPage] Calling connectProvider with credentials:", { ...credentials, apiKey: credentials.apiKey ? "***" : undefined });
-      await connectProvider(configuringProvider.id, credentials);
-      console.log("[SettingsPage] Provider connected successfully");
-      setConfiguringProvider(null);
+      if (apiKeyInput.trim()) credentials.apiKey = apiKeyInput.trim();
+      if (baseUrlInput.trim()) credentials.baseUrl = baseUrlInput.trim();
+      await connectProvider(selectedProvider.id, credentials);
+      setShowModelModal(false);
     } catch (err) {
-      console.error("[SettingsPage] Failed to connect provider:", err);
-      // Provide more helpful error message for OAuth providers
-      if (configuringProvider.authType === "oauth" && String(err).includes("environment variable")) {
-        setConnectError(`${String(err)}\n\nPlease set the required environment variable and restart the application.`);
-      } else {
-        setConnectError(String(err));
-      }
+      setConnectError(String(err));
     } finally {
       setConnecting(false);
     }
@@ -315,43 +308,6 @@ export function SettingsPage() {
       await disconnectProvider(providerId);
     } catch (err) {
       console.error("Failed to disconnect provider:", err);
-    }
-  };
-
-  const handleAddCustomEndpoint = async () => {
-    if (!endpointDisplayName.trim()) {
-      setAddEndpointError("Display name is required");
-      return;
-    }
-    if (!endpointBaseUrl.trim()) {
-      setAddEndpointError("Base URL is required");
-      return;
-    }
-    if (!endpointModelName.trim()) {
-      setAddEndpointError("Model name is required");
-      return;
-    }
-    setAddingEndpoint(true);
-    setAddEndpointError(null);
-    try {
-      const endpointInput: { displayName: string; baseUrl: string; apiKey?: string; modelName: string } = {
-        displayName: endpointDisplayName.trim(),
-        baseUrl: endpointBaseUrl.trim(),
-        modelName: endpointModelName.trim(),
-      };
-      if (endpointApiKey.trim()) {
-        endpointInput.apiKey = endpointApiKey.trim();
-      }
-      await addCustomEndpoint(endpointInput);
-      setShowAddEndpoint(false);
-      setEndpointDisplayName("");
-      setEndpointBaseUrl("");
-      setEndpointApiKey("");
-      setEndpointModelName("");
-    } catch (err) {
-      setAddEndpointError(String(err));
-    } finally {
-      setAddingEndpoint(false);
     }
   };
 
@@ -368,11 +324,6 @@ export function SettingsPage() {
       setShowLogViewer(true);
     }
   };
-
-  const apiKeyProviders = providers.filter((p) => p.authType === "api_key");
-  const subscriptionProviders = providers.filter(
-    (p) => p.authType === "oauth" || p.authType === "cli_credential",
-  );
 
   return (
     <div style={layoutStyle}>
@@ -398,136 +349,152 @@ export function SettingsPage() {
           Configure providers, thresholds, and review pending changes
         </div>
 
-        {/* LLM Providers section */}
+        {/* LLM Providers section - nofx style */}
         <div style={sectionCardStyle}>
-          <div style={sectionTitleStyle}>{"\u{1F916}"} LLM Providers</div>
-          <div style={sectionSubtitleStyle}>
-            Configure API keys and per-agent model overrides
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+            <div>
+              <div style={sectionTitleStyle}>{"\u{1F916}"} AI Models</div>
+              <div style={{ fontSize: 13, color: theme.colors.silverBlue }}>
+                {providers.filter(p => p.isConnected).length} models configured
+              </div>
+            </div>
+            <button
+              onClick={openAddModelModal}
+              style={{
+                background: theme.colors.purple,
+                color: theme.colors.white,
+                border: "none",
+                borderRadius: 8,
+                padding: "10px 20px",
+                fontSize: 14,
+                fontWeight: theme.font.weights.medium,
+                cursor: "pointer",
+              }}
+            >
+              + Add Model
+            </button>
           </div>
 
-          <div style={subgroupLabelStyle}>API Key</div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gap: 12,
-              marginBottom: 24,
-            }}
-          >
-            {apiKeyProviders.map((p) => (
-              <ProviderCard
-                key={p.id}
-                name={p.name}
-                authType={p.authType}
-                isConnected={p.isConnected}
-                {...(p.authDetail !== undefined
-                  ? { authDetail: p.authDetail }
-                  : {})}
-                {...(p.models !== undefined ? { models: p.models } : {})}
-                onConnect={() => handleOpenProviderConfig(p)}
-                onDisconnect={() => handleDisconnectProvider(p.id)}
-              />
-            ))}
-          </div>
-
-          <div
-            style={{
-              ...subgroupLabelStyle,
-              borderTop: `1px dashed ${theme.colors.borderGray}`,
-              paddingTop: 16,
-            }}
-          >
-            {"\u2193"} Subscription / OAuth / Local
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
-              gap: 12,
-              marginBottom: 24,
-            }}
-          >
-            {subscriptionProviders.map((p) => (
-              <ProviderCard
-                key={p.id}
-                name={p.name}
-                authType={p.authType}
-                isConnected={p.isConnected}
-                {...(p.authDetail !== undefined
-                  ? { authDetail: p.authDetail }
-                  : {})}
-                onConnect={() => handleOpenProviderConfig(p)}
-                onDisconnect={() => handleDisconnectProvider(p.id)}
-              />
-            ))}
-          </div>
-
-          <div
-            style={{
-              ...subgroupLabelStyle,
-              marginBottom: 12,
-              borderTop: `1px dashed ${theme.colors.borderGray}`,
-              paddingTop: 16,
-            }}
-          >
-            Per-agent model assignment
-          </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr 1fr",
-              gap: 12,
-            }}
-          >
-            {(["analyzer", "reviewer", "risk_manager", "position_evaluator"] as const).map(
-              (agentId) => {
-                const assignment = agentModels[agentId] || { providerId: "", modelId: "" };
-                const connectedProviders = providers.filter(p => p.isConnected);
-                return (
-                  <div key={agentId}>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: theme.colors.coolGray,
-                        marginBottom: 4,
-                      }}
-                    >
-                      {AGENT_LABELS[agentId]}
+          {/* Configured models list */}
+          {providers.filter(p => p.isConnected).length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 0", color: theme.colors.coolGray, fontSize: 14 }}>
+              No AI models configured yet. Click "Add Model" to get started.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {providers.filter(p => p.isConnected).map((p) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "12px 16px",
+                    border: `1px solid ${theme.colors.borderGray}`,
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    transition: "border-color 0.15s",
+                  }}
+                  onClick={() => openEditModelModal(p)}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = theme.colors.purple; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = theme.colors.borderGray; }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: 8,
+                      background: theme.colors.purpleBg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 18,
+                    }}>
+                      {"\u{1F916}"}
                     </div>
-                    <select
-                      value={`${assignment.providerId}:${assignment.modelId}`}
-                      onChange={(e) => {
-                        const [providerId, modelId] = e.target.value.split(":");
-                        if (providerId && modelId) {
-                          void setAgentModel(agentId, providerId, modelId);
-                        }
-                      }}
+                    <div>
+                      <div style={{ fontWeight: theme.font.weights.semibold, fontSize: 14 }}>{p.name}</div>
+                      <div style={{ fontSize: 12, color: theme.colors.coolGray }}>
+                        {(p.models && p.models.length > 0) ? p.models.slice(0, 3).join(", ") : "Connected"}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{
+                      fontSize: 12,
+                      padding: "3px 10px",
+                      borderRadius: 12,
+                      background: "#ecfdf5",
+                      color: "#059669",
+                      fontWeight: theme.font.weights.medium,
+                    }}>
+                      Active
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); void handleDisconnectProvider(p.id); }}
                       style={{
+                        background: "transparent",
                         border: `1px solid ${theme.colors.borderGray}`,
-                        padding: "10px 12px",
-                        borderRadius: 8,
-                        fontSize: 13,
-                        width: "100%",
-                        background: theme.colors.white,
+                        borderRadius: 6,
+                        padding: "4px 10px",
+                        fontSize: 12,
+                        cursor: "pointer",
+                        color: "#e53e3e",
                       }}
                     >
-                      <option value=":">Select model...</option>
-                      {connectedProviders.map((provider) =>
-                        (provider.models || []).map((model) => (
-                          <option
-                            key={`${provider.id}:${model}`}
-                            value={`${provider.id}:${model}`}
-                          >
-                            {provider.name} · {model}
-                          </option>
-                        ))
-                      )}
-                    </select>
+                      Remove
+                    </button>
                   </div>
-                );
-              },
-            )}
-          </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Per-agent model assignment */}
+          {providers.filter(p => p.isConnected).length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ ...subgroupLabelStyle, borderTop: `1px dashed ${theme.colors.borderGray}`, paddingTop: 16 }}>
+                Per-agent model assignment
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+                {(["analyzer", "reviewer", "risk_manager", "position_evaluator"] as const).map(
+                  (agentId) => {
+                    const assignment = agentModels[agentId] || { providerId: "", modelId: "" };
+                    const connectedProviders = providers.filter(p => p.isConnected);
+                    return (
+                      <div key={agentId}>
+                        <div style={{ fontSize: 13, color: theme.colors.coolGray, marginBottom: 4 }}>
+                          {AGENT_LABELS[agentId]}
+                        </div>
+                        <select
+                          value={`${assignment.providerId}:${assignment.modelId}`}
+                          onChange={(e) => {
+                            const [providerId, modelId] = e.target.value.split(":");
+                            if (providerId && modelId) {
+                              void setAgentModel(agentId, providerId, modelId);
+                            }
+                          }}
+                          style={{
+                            border: `1px solid ${theme.colors.borderGray}`,
+                            padding: "10px 12px",
+                            borderRadius: 8,
+                            fontSize: 13,
+                            width: "100%",
+                            background: theme.colors.white,
+                          }}
+                        >
+                          <option value=":">Select model...</option>
+                          {connectedProviders.map((provider) =>
+                            (provider.models || []).map((model) => (
+                              <option key={`${provider.id}:${model}`} value={`${provider.id}:${model}`}>
+                                {provider.name} · {model}
+                              </option>
+                            ))
+                          )}
+                        </select>
+                      </div>
+                    );
+                  }
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Trading Thresholds section */}
@@ -1198,208 +1165,206 @@ export function SettingsPage() {
           </div>
         )}
 
-        {/* Provider Configuration Dialog */}
-        {configuringProvider && (
+        {/* Model Config Modal (nofx-style 2-step wizard) */}
+        {showModelModal && (
           <div
             style={{
-              position: "fixed",
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
+              position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
               background: "rgba(0, 0, 0, 0.5)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              display: "flex", alignItems: "center", justifyContent: "center",
               zIndex: 1000,
             }}
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setConfiguringProvider(null);
-              }
-            }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowModelModal(false); }}
           >
-            <div
-              style={{
-                background: theme.colors.white,
-                borderRadius: 12,
-                padding: 24,
-                width: 400,
-                maxWidth: "90vw",
-                boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 18,
-                  fontWeight: theme.font.weights.semibold,
-                  marginBottom: 4,
-                }}
-              >
-                Configure {configuringProvider.name}
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: theme.colors.silverBlue,
-                  marginBottom: 20,
-                }}
-              >
-                {configuringProvider.authType === "api_key"
-                  ? "Enter your API key to connect"
-                  : configuringProvider.authType === "cli_credential"
-                    ? "Enter the base URL for your local service"
-                    : "OAuth configuration"}
+            <div style={{
+              background: theme.colors.white,
+              borderRadius: 12,
+              padding: 24,
+              width: modalStep === 0 ? 640 : 440,
+              maxWidth: "90vw",
+              maxHeight: "80vh",
+              overflowY: "auto",
+              boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
+            }}>
+              {/* Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {modalStep === 1 && !editingProvider && (
+                    <button
+                      onClick={() => setModalStep(0)}
+                      style={{ background: "transparent", border: "none", fontSize: 18, cursor: "pointer", padding: "0 4px" }}
+                    >
+                      ←
+                    </button>
+                  )}
+                  <span style={{ fontSize: 18, fontWeight: theme.font.weights.semibold }}>
+                    {modalStep === 0 ? "Select AI Provider" : editingProvider ? `Edit ${selectedProvider?.name}` : `Configure ${selectedProvider?.name}`}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setShowModelModal(false)}
+                  style={{ background: "transparent", border: "none", fontSize: 20, cursor: "pointer", color: theme.colors.coolGray }}
+                >
+                  ×
+                </button>
               </div>
 
-              {configuringProvider.authType === "api_key" && (
-                <div style={{ marginBottom: 16 }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: 12,
-                      color: theme.colors.coolGray,
-                      marginBottom: 4,
-                    }}
-                  >
-                    API Key
-                  </label>
-                  <input
-                    type="password"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="sk-..."
-                    style={{
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: `1px solid ${theme.colors.borderGray}`,
-                      borderRadius: 6,
-                      fontSize: 14,
-                    }}
-                  />
+              {/* Step 0: Provider Selection Grid */}
+              {modalStep === 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                  {providers.filter(p => !p.isConnected).map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() => handleSelectProvider(p)}
+                      style={{
+                        border: `2px solid ${theme.colors.borderGray}`,
+                        borderRadius: 10,
+                        padding: "16px 12px",
+                        textAlign: "center",
+                        cursor: "pointer",
+                        transition: "border-color 0.15s, background 0.15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.borderColor = theme.colors.purple;
+                        (e.currentTarget as HTMLDivElement).style.background = theme.colors.purpleBg;
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.borderColor = theme.colors.borderGray;
+                        (e.currentTarget as HTMLDivElement).style.background = "transparent";
+                      }}
+                    >
+                      <div style={{ fontSize: 24, marginBottom: 6 }}>{"\u{1F916}"}</div>
+                      <div style={{ fontSize: 13, fontWeight: theme.font.weights.semibold }}>{p.name}</div>
+                      <div style={{
+                        fontSize: 11,
+                        color: theme.colors.coolGray,
+                        marginTop: 2,
+                      }}>
+                        {p.authType === "cli_credential" ? "Local" : "API Key"}
+                      </div>
+                    </div>
+                  ))}
+                  {providers.filter(p => !p.isConnected).length === 0 && (
+                    <div style={{ gridColumn: "1 / -1", textAlign: "center", padding: 20, color: theme.colors.coolGray }}>
+                      All providers are already configured.
+                    </div>
+                  )}
                 </div>
               )}
 
-              {configuringProvider.authType === "cli_credential" && (
-                <div style={{ marginBottom: 16 }}>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: 12,
-                      color: theme.colors.coolGray,
-                      marginBottom: 4,
-                    }}
-                  >
-                    Base URL
-                  </label>
-                  <input
-                    type="text"
-                    value={baseUrlInput}
-                    onChange={(e) => setBaseUrlInput(e.target.value)}
-                    placeholder="http://localhost:11434"
-                    style={{
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: `1px solid ${theme.colors.borderGray}`,
-                      borderRadius: 6,
-                      fontSize: 14,
-                    }}
-                  />
-                </div>
-              )}
+              {/* Step 1: Configuration Form */}
+              {modalStep === 1 && selectedProvider && (
+                <div>
+                  {/* API Key field - for all except cli_credential */}
+                  {selectedProvider.authType !== "cli_credential" && (
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>
+                        API Key / Token *
+                      </label>
+                      <input
+                        type="password"
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                        placeholder="Enter your API key or token"
+                        autoFocus
+                        style={{
+                          width: "100%", padding: "10px 12px",
+                          border: `1px solid ${theme.colors.borderGray}`,
+                          borderRadius: 6, fontSize: 14, boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  )}
 
-              {configuringProvider.authType === "oauth" && (
-                <div style={{ marginBottom: 16 }}>
-                  <div
-                    style={{
-                      background: "#f0f9ff",
-                      border: "1px solid #bae6fd",
-                      borderRadius: 6,
-                      padding: "12px 16px",
-                      fontSize: 13,
-                      color: "#0369a1",
-                      marginBottom: 12,
-                    }}
-                  >
-                    <strong>Subscription / Coding Plan Mode</strong>
-                    <br />
-                    This provider uses environment variables for authentication.
-                    <br />
-                    Token will be read from environment variable.
+                  {/* Base URL field - for cli_credential (required) or as optional override */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>
+                      {selectedProvider.authType === "cli_credential" ? "Base URL *" : "Custom Base URL (optional)"}
+                    </label>
+                    <input
+                      type="url"
+                      value={baseUrlInput}
+                      onChange={(e) => setBaseUrlInput(e.target.value)}
+                      placeholder={selectedProvider.authType === "cli_credential" ? "http://localhost:11434" : "Leave blank for default"}
+                      autoFocus={selectedProvider.authType === "cli_credential"}
+                      style={{
+                        width: "100%", padding: "10px 12px",
+                        border: `1px solid ${theme.colors.borderGray}`,
+                        borderRadius: 6, fontSize: 14, boxSizing: "border-box",
+                      }}
+                    />
+                    <div style={{ fontSize: 11, color: theme.colors.coolGray, marginTop: 2 }}>
+                      {selectedProvider.authType === "cli_credential" ? "URL of your local service" : "Override the default API endpoint (for proxies or compatible services)"}
+                    </div>
                   </div>
-                  <label
-                    style={{
-                      display: "block",
-                      fontSize: 12,
-                      color: theme.colors.coolGray,
-                      marginBottom: 4,
-                    }}
-                  >
-                    Access Token (optional - will use env var if empty)
-                  </label>
-                  <input
-                    type="password"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="Leave empty to use environment variable"
-                    style={{
-                      width: "100%",
-                      padding: "10px 12px",
-                      border: `1px solid ${theme.colors.borderGray}`,
-                      borderRadius: 6,
-                      fontSize: 14,
-                    }}
-                  />
+
+                  {/* Custom model name - optional */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 12, color: theme.colors.coolGray, marginBottom: 4 }}>
+                      Custom Model Name (optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={modelNameInput}
+                      onChange={(e) => setModelNameInput(e.target.value)}
+                      placeholder="Leave blank for default model"
+                      style={{
+                        width: "100%", padding: "10px 12px",
+                        border: `1px solid ${theme.colors.borderGray}`,
+                        borderRadius: 6, fontSize: 14, boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+
+                  {/* Error message */}
+                  {connectError && (
+                    <div style={{
+                      background: "#fee2e2", color: "#dc2626",
+                      padding: "10px 12px", borderRadius: 6, fontSize: 13, marginBottom: 16,
+                    }}>
+                      {connectError}
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                    {editingProvider && (
+                      <button
+                        onClick={() => { void handleDisconnectProvider(editingProvider.id); setShowModelModal(false); }}
+                        style={{
+                          background: "transparent", border: `1px solid #e53e3e`,
+                          borderRadius: 6, padding: "8px 16px", fontSize: 14,
+                          cursor: "pointer", color: "#e53e3e", marginRight: "auto",
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setShowModelModal(false)}
+                      style={{
+                        background: "transparent", border: `1px solid ${theme.colors.borderGray}`,
+                        borderRadius: 6, padding: "8px 16px", fontSize: 14, cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => void handleSaveModel()}
+                      disabled={connecting}
+                      style={{
+                        background: theme.colors.purple, color: theme.colors.white,
+                        border: "none", borderRadius: 6, padding: "8px 20px",
+                        fontSize: 14, fontWeight: theme.font.weights.medium,
+                        cursor: connecting ? "not-allowed" : "pointer",
+                        opacity: connecting ? 0.6 : 1,
+                      }}
+                    >
+                      {connecting ? "Connecting..." : "Save Config"}
+                    </button>
+                  </div>
                 </div>
               )}
-
-              {connectError && (
-                <div
-                  style={{
-                    background: "#fee2e2",
-                    color: "#dc2626",
-                    padding: "10px 12px",
-                    borderRadius: 6,
-                    fontSize: 13,
-                    marginBottom: 16,
-                  }}
-                >
-                  {connectError}
-                </div>
-              )}
-
-              <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-                <button
-                  onClick={() => setConfiguringProvider(null)}
-                  style={{
-                    background: "transparent",
-                    border: `1px solid ${theme.colors.borderGray}`,
-                    borderRadius: 6,
-                    padding: "8px 16px",
-                    fontSize: 14,
-                    cursor: "pointer",
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleConnectProvider}
-                  disabled={connecting}
-                  style={{
-                    background: theme.colors.purple,
-                    color: theme.colors.white,
-                    border: "none",
-                    borderRadius: 6,
-                    padding: "8px 16px",
-                    fontSize: 14,
-                    fontWeight: theme.font.weights.medium,
-                    cursor: connecting ? "not-allowed" : "pointer",
-                    opacity: connecting ? 0.6 : 1,
-                  }}
-                >
-                  {connecting ? "Connecting..." : "Connect"}
-                </button>
-              </div>
             </div>
           </div>
         )}

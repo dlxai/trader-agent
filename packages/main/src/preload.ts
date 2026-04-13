@@ -74,6 +74,27 @@ const api = {
   listLogFiles: () => ipcRenderer.invoke("listLogFiles"),
   openLogDir: () => ipcRenderer.invoke("openLogDir"),
 
+  // Live trade config
+  getLiveTradeConfig: () => ipcRenderer.invoke("pmt:getLiveTradeConfig"),
+  setLiveTradeConfig: (config: unknown) => ipcRenderer.invoke("pmt:setLiveTradeConfig", config),
+
+  // AI Exit config
+  getAiExitConfig: () => ipcRenderer.invoke("pmt:getAiExitConfig"),
+  setAiExitConfig: (config: unknown) => ipcRenderer.invoke("pmt:setAiExitConfig", config),
+
+  // Drawdown guard config
+  getDrawdownGuardConfig: () => ipcRenderer.invoke("pmt:getDrawdownGuardConfig"),
+  setDrawdownGuardConfig: (config: unknown) => ipcRenderer.invoke("pmt:setDrawdownGuardConfig", config),
+
+  // Coordinator config
+  getCoordinatorConfig: () => ipcRenderer.invoke("pmt:getCoordinatorConfig"),
+  setCoordinatorConfig: (config: unknown) => ipcRenderer.invoke("pmt:setCoordinatorConfig", config),
+
+  // Custom LLM endpoints
+  listCustomEndpoints: () => ipcRenderer.invoke("pmt:listCustomEndpoints"),
+  addCustomEndpoint: (input: unknown) => ipcRenderer.invoke("pmt:addCustomEndpoint", input),
+  removeCustomEndpoint: (id: string) => ipcRenderer.invoke("pmt:removeCustomEndpoint", id),
+
   // Event subscriptions (Main -> Renderer push)
   on: (event: string, handler: (...args: unknown[]) => void) => {
     const wrapped = (_e: unknown, ...args: unknown[]) => handler(...args);

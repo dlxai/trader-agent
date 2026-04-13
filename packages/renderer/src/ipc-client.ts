@@ -92,6 +92,22 @@ declare global {
       listLogFiles(): Promise<Array<{ name: string; path: string; size: number; date: string }>>;
       openLogDir(): Promise<{ success: boolean }>;
       on(event: string, handler: (...args: unknown[]) => void): () => void;
+      // Live trade config
+      getLiveTradeConfig(): Promise<{ mode: "paper" | "live"; slippageThreshold: number; maxSlippage: number; limitOrderTimeoutSec: number }>;
+      setLiveTradeConfig(config: { mode: "paper" | "live"; slippageThreshold: number; maxSlippage: number; limitOrderTimeoutSec: number }): Promise<{ success: boolean }>;
+      // AI Exit config
+      getAiExitConfig(): Promise<{ enabled: boolean; intervalSec: number }>;
+      setAiExitConfig(config: { enabled: boolean; intervalSec: number }): Promise<{ success: boolean }>;
+      // Drawdown guard config
+      getDrawdownGuardConfig(): Promise<{ enabled: boolean; minProfitPct: number; maxDrawdownFromPeak: number }>;
+      setDrawdownGuardConfig(config: { enabled: boolean; minProfitPct: number; maxDrawdownFromPeak: number }): Promise<{ success: boolean }>;
+      // Coordinator config
+      getCoordinatorConfig(): Promise<{ actionable: boolean; intervalMin: number }>;
+      setCoordinatorConfig(config: { actionable: boolean; intervalMin: number }): Promise<{ success: boolean }>;
+      // Custom LLM endpoints
+      listCustomEndpoints(): Promise<Array<{ id: string; displayName: string; baseUrl: string; modelName: string }>>;
+      addCustomEndpoint(input: { displayName: string; baseUrl: string; apiKey?: string; modelName: string }): Promise<{ success: boolean; providerId: string }>;
+      removeCustomEndpoint(id: string): Promise<{ success: boolean }>;
     };
   }
 }

@@ -261,6 +261,7 @@ export function SettingsPage() {
   };
 
   const handleOpenProviderConfig = (provider: ProviderInfoUI) => {
+    console.log("[SettingsPage] Opening config for provider:", provider.id, provider.name, provider.authType);
     setConfiguringProvider(provider);
     setApiKeyInput("");
     setBaseUrlInput("");

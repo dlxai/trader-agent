@@ -77,7 +77,7 @@ export interface CustomEndpointInfo {
 
 interface SettingsState {
   providers: ProviderInfoUI[];
-  agentModels: Record<"analyzer" | "reviewer" | "risk_manager", AgentAssignment>;
+  agentModels: Record<"analyzer" | "reviewer" | "risk_manager" | "position_evaluator", AgentAssignment>;
   thresholds: Thresholds;
   riskLimits: RiskLimits;
   liveTradeSettings: LiveTradeSettings;
@@ -91,7 +91,7 @@ interface SettingsState {
   removeProposalLocally: (id: number) => void;
   updateThreshold: (key: keyof Thresholds, value: number) => Promise<void>;
   updateRiskLimit: (key: keyof RiskLimits, value: number) => Promise<void>;
-  setAgentModel: (agentId: "analyzer" | "reviewer" | "risk_manager", providerId: string, modelId: string) => Promise<void>;
+  setAgentModel: (agentId: "analyzer" | "reviewer" | "risk_manager" | "position_evaluator", providerId: string, modelId: string) => Promise<void>;
   connectProvider: (providerId: string, credentials: { apiKey?: string; baseUrl?: string }) => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<void>;
   updateLiveTradeSettings: (settings: Partial<LiveTradeSettings>) => Promise<void>;
@@ -135,12 +135,13 @@ export const DEFAULT_PROXY_CONFIG = {
 };
 
 const INITIAL_AGENT_MODELS: Record<
-  "analyzer" | "reviewer" | "risk_manager",
+  "analyzer" | "reviewer" | "risk_manager" | "position_evaluator",
   AgentAssignment
 > = {
   analyzer: { providerId: "", modelId: "" },
   reviewer: { providerId: "", modelId: "" },
   risk_manager: { providerId: "", modelId: "" },
+  position_evaluator: { providerId: "", modelId: "" },
 };
 
 const INITIAL_THRESHOLDS: Thresholds = {

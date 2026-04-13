@@ -48,10 +48,11 @@ const subgroupLabelStyle: React.CSSProperties = {
   marginBottom: 10,
 };
 
-const AGENT_LABELS: Record<"analyzer" | "reviewer" | "risk_manager", string> = {
+const AGENT_LABELS: Record<"analyzer" | "reviewer" | "risk_manager" | "position_evaluator", string> = {
   analyzer: "\u{1F9E0} Analyzer",
   reviewer: "\u{1F4CA} Reviewer",
   risk_manager: "\u{1F6E1}\uFE0F Risk Mgr",
+  position_evaluator: "\u{1F4CB} Position Eval",
 };
 
 // Editable field component
@@ -473,11 +474,11 @@ export function SettingsPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
+              gridTemplateColumns: "1fr 1fr 1fr 1fr",
               gap: 12,
             }}
           >
-            {(["analyzer", "reviewer", "risk_manager"] as const).map(
+            {(["analyzer", "reviewer", "risk_manager", "position_evaluator"] as const).map(
               (agentId) => {
                 const assignment = agentModels[agentId] || { providerId: "", modelId: "" };
                 const connectedProviders = providers.filter(p => p.isConnected);

@@ -280,7 +280,6 @@ export function SettingsPage() {
 
   const handleSaveModel = async () => {
     console.log("[SettingsPage] handleSaveModel called", { selectedProvider: selectedProvider?.id, apiKeyLength: apiKeyInput.length });
-    alert("handleSaveModel called!");
     if (!selectedProvider) {
       console.log("[SettingsPage] no selectedProvider, returning");
       return;

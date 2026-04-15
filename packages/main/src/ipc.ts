@@ -464,10 +464,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           break;
         // Coding plan providers - use OpenAI compatible with OAuth token
         case "zhipu_coding":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
           provider = createOpenAICompatProvider({
             providerId: "zhipu_coding" as never,
             displayName: "Zhipu (Coding Plan)",
-            apiKey: credentials.apiKey || process.env.ZHIPU_CODING_TOKEN || "",
+            apiKey: credentials.apiKey,
             baseUrl: "https://open.bigmodel.cn/api/paas/v4",
             defaultModels: [
               { id: "glm-4.5", contextWindow: 128000 },
@@ -476,10 +478,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           });
           break;
         case "qwen_coding":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
           provider = createOpenAICompatProvider({
             providerId: "qwen_coding" as never,
             displayName: "Qwen (Coding Plan)",
-            apiKey: credentials.apiKey || process.env.QWEN_CODING_TOKEN || "",
+            apiKey: credentials.apiKey,
             baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
             defaultModels: [
               { id: "qwen-max", contextWindow: 128000 },
@@ -488,10 +492,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           });
           break;
         case "kimi_code":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
           provider = createOpenAICompatProvider({
             providerId: "kimi_code" as never,
             displayName: "Kimi (Code Plan)",
-            apiKey: credentials.apiKey || process.env.KIMI_CODE_TOKEN || "",
+            apiKey: credentials.apiKey,
             baseUrl: "https://api.moonshot.cn/v1",
             defaultModels: [
               { id: "kimi-k1-5", contextWindow: 128000 },
@@ -500,10 +506,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           });
           break;
         case "minimax_coding":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
           provider = createOpenAICompatProvider({
             providerId: "minimax_coding" as never,
             displayName: "MiniMax (Coding Plan)",
-            apiKey: credentials.apiKey || process.env.MINIMAX_CODING_TOKEN || "",
+            apiKey: credentials.apiKey,
             baseUrl: "https://api.minimax.chat/v1",
             defaultModels: [
               { id: "MiniMax-M2.1", contextWindow: 128000 },
@@ -512,10 +520,12 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           });
           break;
         case "volcengine_coding":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
           provider = createOpenAICompatProvider({
             providerId: "volcengine_coding" as never,
             displayName: "Volcengine (Coding Plan)",
-            apiKey: credentials.apiKey || process.env.VOLCENGINE_CODING_TOKEN || "",
+            apiKey: credentials.apiKey,
             baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
             defaultModels: [
               { id: "doubao-pro-32k", contextWindow: 32000 },
@@ -528,12 +538,22 @@ export function registerIpcHandlers(deps: IpcDeps): void {
           throw new Error(`unknown provider: ${providerId}`);
       }
 
-      console.log("[ipc] Connecting to provider...");
-      await provider.connect();
-      console.log("[ipc] Provider connected, registering...");
-      ctx.registry.register(provider);
-      console.log("[ipc] Provider registered successfully");
-      return { success: true, providerId };
+      try {
+        console.log("[ipc] Connecting to provider...");
+        await provider.connect();
+        console.log("[ipc] Provider connected, registering...");
+        ctx.registry.register(provider);
+        console.log("[ipc] Provider registered successfully");
+        return { success: true, providerId };
+      } catch (err) {
+        console.error("[ipc] connectProvider error:", err);
+        // Check if it's a secrets storage error
+        const errorMsg = String(err);
+        if (errorMsg.includes("encryption") || errorMsg.includes("safeStorage") || errorMsg.includes("OS encryption")) {
+          throw new Error(`Failed to save API key: ${errorMsg}. Please check if Windows Data Protection is available.`);
+        }
+        throw err;
+      }
     }
   );
 

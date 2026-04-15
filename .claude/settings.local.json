@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm start:*)",
+      "Bash(ls -la node_modules/.pnpm/better-sqlite3*/node_modules/better-sqlite3/build/Release/)",
+      "Bash(npx electron-rebuild:*)",
+      "Bash(npx electron-builder:*)",
+      "Bash(npx @electron/rebuild -f -w better-sqlite3 -v 30.5.1)",
+      "Bash(npm rebuild:*)",
+      "Bash(pip install:*)",
+      "Bash(node -e \"console.log\\(process.version, process.versions.modules\\)\")",
+      "Bash(npm info:*)",
+      "Bash(npx prebuild-install:*)",
+      "Bash(node -e \"const N = require\\('better-sqlite3'\\); console.log\\('loaded successfully'\\)\")",
+      "Bash(npm i:*)",
+      "Bash(pnpm build:*)",
+      "Bash(taskkill /F /IM electron.exe)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(tasklist:*)"
+    ]
+  }
+}

@@ -565,6 +565,68 @@ async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
             defaultModels: [{ id: "grok-2", contextWindow: 128000 }],
           });
           break;
+        // Coding plan providers
+        case "zhipu_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "zhipu_coding" as never,
+            displayName: "Zhipu (Coding Plan)",
+            apiKey,
+            baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+            defaultModels: [
+              { id: "glm-4.5", contextWindow: 128000 },
+              { id: "glm-4-flash", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "qwen_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "qwen_coding" as never,
+            displayName: "Qwen (Coding Plan)",
+            apiKey,
+            baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            defaultModels: [
+              { id: "qwen-max", contextWindow: 128000 },
+              { id: "qwen-plus", contextWindow: 128000 },
+            ],
+          });
+          break;
+        case "kimi_code":
+          provider = createOpenAICompatProvider({
+            providerId: "kimi_code" as never,
+            displayName: "Kimi (Code Plan)",
+            apiKey,
+            baseUrl: "https://api.moonshot.cn/v1",
+            defaultModels: [
+              { id: "kimi-k1-5", contextWindow: 128000 },
+              { id: "kimi-k1-5-32k", contextWindow: 32768 },
+            ],
+          });
+          break;
+        case "minimax_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "minimax_coding" as never,
+            displayName: "MiniMax (Coding Plan)",
+            apiKey,
+            baseUrl: "https://api.minimax.chat/v1",
+            defaultModels: [
+              { id: "MiniMax-M2.1", contextWindow: 128000 },
+              { id: "MiniMax-Text-01", contextWindow: 1000000 },
+            ],
+          });
+          break;
+        case "volcengine_coding":
+          provider = createOpenAICompatProvider({
+            providerId: "volcengine_coding" as never,
+            displayName: "Volcengine (Coding Plan)",
+            apiKey,
+            baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+            defaultModels: [
+              { id: "doubao-pro-32k", contextWindow: 32000 },
+              { id: "doubao-pro-128k", contextWindow: 128000 },
+              { id: "doubao-lite-32k", contextWindow: 32000 },
+            ],
+          });
+          break;
       }
       if (provider) {
         await provider.connect();

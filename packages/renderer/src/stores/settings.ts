@@ -349,11 +349,13 @@ export const useSettings = create<SettingsState>((set) => ({
   },
 
   connectProvider: async (providerId, credentials) => {
-    console.log("[settings store] connectProvider called:", providerId, "isElectron:", isElectron());
+    console.log("[settings store] connectProvider called:", providerId, "credentials:", credentials, "isElectron:", isElectron());
     if (isElectron()) {
       try {
-        await pmt.connectProvider(providerId, credentials);
-        console.log("[settings store] connectProvider succeeded");
+        console.log("[settings store] calling pmt.connectProvider...");
+        const result = await pmt.connectProvider(providerId, credentials);
+        console.log("[settings store] connectProvider result:", result);
+        console.log("[settings store] refreshing providers...");
         // Refresh providers list after connection
         await useSettings.getState().refresh();
         console.log("[settings store] providers refreshed");

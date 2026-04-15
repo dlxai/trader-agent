@@ -279,26 +279,38 @@ export function SettingsPage() {
   };
 
   const handleSaveModel = async () => {
-    if (!selectedProvider) return;
+    console.log("[SettingsPage] handleSaveModel called", { selectedProvider: selectedProvider?.id, apiKeyLength: apiKeyInput.length });
+    alert("handleSaveModel called!");
+    if (!selectedProvider) {
+      console.log("[SettingsPage] no selectedProvider, returning");
+      return;
+    }
     if (selectedProvider.authType !== "cli_credential" && !apiKeyInput.trim()) {
+      console.log("[SettingsPage] no apiKey, setting error");
       setConnectError("API Key / Token is required");
       return;
     }
     if (selectedProvider.authType === "cli_credential" && !baseUrlInput.trim()) {
+      console.log("[SettingsPage] no baseUrl for cli_credential, setting error");
       setConnectError("Base URL is required");
       return;
     }
+    console.log("[SettingsPage] setting connecting=true");
     setConnecting(true);
     setConnectError(null);
     try {
       const credentials: { apiKey?: string; baseUrl?: string } = {};
       if (apiKeyInput.trim()) credentials.apiKey = apiKeyInput.trim();
       if (baseUrlInput.trim()) credentials.baseUrl = baseUrlInput.trim();
+      console.log("[SettingsPage] calling connectProvider with", selectedProvider.id);
       await connectProvider(selectedProvider.id, credentials);
+      console.log("[SettingsPage] connectProvider succeeded, closing modal");
       setShowModelModal(false);
     } catch (err) {
+      console.log("[SettingsPage] connectProvider error:", err);
       setConnectError(String(err));
     } finally {
+      console.log("[SettingsPage] setting connecting=false");
       setConnecting(false);
     }
   };

@@ -216,6 +216,10 @@ export const useSettings = create<SettingsState>((set) => ({
         pmt.listCustomEndpoints(),
       ]);
 
+    // Debug: Show what we're getting from backend
+    const backendConnected = providers.filter(p => (typeof p.isConnected === "function" ? p.isConnected() : p.isConnected));
+    console.log("[settings] DEBUG: backend returned", providers.length, "providers, connected:", backendConnected.map(p => p.providerId));
+
     // Merge connected providers with initial provider list
     const connectedProviderMap = new Map(
       providers.map((p) => [
@@ -224,11 +228,14 @@ export const useSettings = create<SettingsState>((set) => ({
           id: p.providerId,
           name: p.displayName,
           authType: p.authType,
-          isConnected: p.isConnected,
-          models: p.models.map((m) => m.id),
+          isConnected: typeof p.isConnected === "function" ? p.isConnected() : p.isConnected,
+          models: p.models?.map((m) => m.id) || [],
         },
       ])
     );
+
+    console.log("[settings] DEBUG: connectedProviderMap has", connectedProviderMap.size, "entries");
+    console.log("[settings] DEBUG: INITIAL_PROVIDERS has", INITIAL_PROVIDERS.length, "entries");
 
     // Merge: use connected provider data if available, otherwise use initial data
     const mergedProviders = INITIAL_PROVIDERS.map((initial) => {
@@ -349,22 +356,23 @@ export const useSettings = create<SettingsState>((set) => ({
   },
 
   connectProvider: async (providerId, credentials) => {
-    console.log("[settings store] connectProvider called:", providerId, "credentials:", credentials, "isElectron:", isElectron());
+    alert(`[store] connectProvider called: ${providerId}`);
     if (isElectron()) {
       try {
-        console.log("[settings store] calling pmt.connectProvider...");
+        alert(`[store] calling pmt.connectProvider...`);
         const result = await pmt.connectProvider(providerId, credentials);
-        console.log("[settings store] connectProvider result:", result);
-        console.log("[settings store] refreshing providers...");
+        alert(`[store] connectProvider returned: ${JSON.stringify(result)}`);
+        alert(`[store] calling refresh...`);
         // Refresh providers list after connection
         await useSettings.getState().refresh();
-        console.log("[settings store] providers refreshed");
+        alert(`[store] refresh complete`);
       } catch (err) {
+        alert(`[store] connectProvider failed: ${err}`);
         console.error("[settings store] connectProvider failed:", err);
         throw err;
       }
     } else {
-      console.warn("[settings store] Not in Electron, skipping connectProvider");
+      alert("[store] Not in Electron!");
     }
   },
 

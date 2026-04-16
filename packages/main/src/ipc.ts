@@ -539,13 +539,21 @@ export function registerIpcHandlers(deps: IpcDeps): void {
       }
 
       try {
-        console.log("[ipc] Connecting to provider...");
         await provider.connect();
-        console.log("[ipc] Provider connected, registering...");
+        if (!provider.isConnected()) {
+          throw new Error("Provider connect() did not set isConnected to true");
+        }
         ctx.registry.register(provider);
-        console.log("[ipc] Provider registered successfully");
+        const registered = ctx.registry.get(providerId);
+        if (!registered) {
+          throw new Error("Failed to register provider in registry");
+        }
+        if (!registered.isConnected()) {
+          throw new Error("Registered provider isConnected is false");
+        }
         return { success: true, providerId };
       } catch (err) {
+        alert(`Backend error: ${err}`);
         console.error("[ipc] connectProvider error:", err);
         // Check if it's a secrets storage error
         const errorMsg = String(err);

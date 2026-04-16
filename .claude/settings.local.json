@@ -16,7 +16,11 @@
       "Bash(pnpm build:*)",
       "Bash(taskkill /F /IM electron.exe)",
       "Bash(taskkill /F /IM node.exe)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "Bash(pnpm --filter @pmt/main start)",
+      "Bash(taskkill /F /IM electron.exe sleep 2 ps aux)",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r kill -9 sleep 1 cd D:/work/trader-agent)"
     ]
   }
 }

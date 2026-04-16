@@ -279,38 +279,37 @@ export function SettingsPage() {
   };
 
   const handleSaveModel = async () => {
-    console.log("[SettingsPage] handleSaveModel called", { selectedProvider: selectedProvider?.id, apiKeyLength: apiKeyInput.length });
+    alert("handleSaveModel START");
     if (!selectedProvider) {
-      console.log("[SettingsPage] no selectedProvider, returning");
+      alert("no selectedProvider!");
       return;
     }
+    alert(`selectedProvider: ${selectedProvider.id}`);
     if (selectedProvider.authType !== "cli_credential" && !apiKeyInput.trim()) {
-      console.log("[SettingsPage] no apiKey, setting error");
       setConnectError("API Key / Token is required");
       return;
     }
     if (selectedProvider.authType === "cli_credential" && !baseUrlInput.trim()) {
-      console.log("[SettingsPage] no baseUrl for cli_credential, setting error");
       setConnectError("Base URL is required");
       return;
     }
-    console.log("[SettingsPage] setting connecting=true");
+    alert("about to call connectProvider...");
     setConnecting(true);
     setConnectError(null);
     try {
       const credentials: { apiKey?: string; baseUrl?: string } = {};
       if (apiKeyInput.trim()) credentials.apiKey = apiKeyInput.trim();
       if (baseUrlInput.trim()) credentials.baseUrl = baseUrlInput.trim();
-      console.log("[SettingsPage] calling connectProvider with", selectedProvider.id);
+      alert(`calling connectProvider with ${selectedProvider.id}`);
       await connectProvider(selectedProvider.id, credentials);
-      console.log("[SettingsPage] connectProvider succeeded, closing modal");
+      alert("connectProvider done!");
       setShowModelModal(false);
     } catch (err) {
-      console.log("[SettingsPage] connectProvider error:", err);
+      alert(`ERROR: ${err}`);
       setConnectError(String(err));
     } finally {
-      console.log("[SettingsPage] setting connecting=false");
       setConnecting(false);
+      alert("handleSaveModel END");
     }
   };
 
@@ -367,6 +366,10 @@ export function SettingsPage() {
               <div style={sectionTitleStyle}>{"\u{1F916}"} AI Models</div>
               <div style={{ fontSize: 13, color: theme.colors.silverBlue }}>
                 {providers.filter(p => p.isConnected).length} models configured
+              </div>
+              {/* DEBUG INFO */}
+              <div style={{ fontSize: 10, color: "#888", marginTop: 4, fontFamily: "monospace" }}>
+                DEBUG: {providers.map(p => `${p.id}:${p.isConnected}`).join(", ")}
               </div>
             </div>
             <button

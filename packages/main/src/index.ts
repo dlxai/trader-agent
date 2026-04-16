@@ -32,7 +32,7 @@ import { openclawBridge } from "./openclaw-bridge.js";
 import { initLogger, getLogger, closeLogger } from "./logger.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const preloadPath = join(__dirname, "preload.js");
+const preloadPath = join(__dirname, "preload.cjs");
 const isDev = process.env.NODE_ENV === "development";
 const rendererUrl = isDev
   ? process.env.VITE_DEV_SERVER_URL ?? "http://localhost:5173"

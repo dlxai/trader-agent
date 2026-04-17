@@ -25,6 +25,7 @@ export type ProviderId =
   | "kimi_code"
   | "minimax_coding"
   | "volcengine_coding"
+  | "volcengine_coding_v3"
   | "gemini_api"
   // AWS
   | "bedrock"

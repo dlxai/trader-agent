@@ -527,8 +527,28 @@ export function registerIpcHandlers(deps: IpcDeps): void {
             apiKey: credentials.apiKey,
             baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
             overrideId: "volcengine_coding",
-            displayName: "Volcengine (Coding Plan)",
+            displayName: "Volcengine (Anthropic Protocol)",
             models: [
+              { id: "doubao-1-5-pro-32k", contextWindow: 32000 },
+              { id: "doubao-1-5-pro-128k", contextWindow: 128000 },
+              { id: "doubao-1-5-pro-256k", contextWindow: 256000 },
+              { id: "doubao-1-5-lite-32k", contextWindow: 32000 },
+              { id: "doubao-1-5-lite-128k", contextWindow: 128000 },
+              { id: "doubao-pro-32k", contextWindow: 32000 },
+              { id: "doubao-pro-128k", contextWindow: 128000 },
+              { id: "doubao-lite-32k", contextWindow: 32000 },
+            ],
+          });
+          break;
+        case "volcengine_coding_v3":
+          if (!credentials.apiKey) throw new Error("API key required");
+          await secrets.set(`provider_${providerId}_apiKey`, credentials.apiKey);
+          provider = createOpenAICompatProvider({
+            providerId: "volcengine_coding_v3" as never,
+            displayName: "Volcengine (OpenAI Protocol)",
+            apiKey: credentials.apiKey,
+            baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
+            defaultModels: [
               { id: "doubao-1-5-pro-32k", contextWindow: 32000 },
               { id: "doubao-1-5-pro-128k", contextWindow: 128000 },
               { id: "doubao-1-5-pro-256k", contextWindow: 256000 },

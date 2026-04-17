@@ -122,7 +122,8 @@ const INITIAL_PROVIDERS: ProviderInfoUI[] = [
   { id: "qwen_coding", name: "Qwen (Coding Plan)", authType: "api_key", isConnected: false },
   { id: "kimi_code", name: "Kimi (Code Plan)", authType: "api_key", isConnected: false },
   { id: "minimax_coding", name: "MiniMax (Coding Plan)", authType: "api_key", isConnected: false },
-  { id: "volcengine_coding", name: "Volcengine (Coding Plan)", authType: "api_key", isConnected: false },
+  { id: "volcengine_coding", name: "Volcengine (Anthropic Protocol)", authType: "api_key", isConnected: false },
+  { id: "volcengine_coding_v3", name: "Volcengine (OpenAI Protocol)", authType: "api_key", isConnected: false },
   // Local/CLI providers
   { id: "ollama", name: "Ollama", authType: "cli_credential", isConnected: false },
 ];

@@ -48,6 +48,7 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
     throw new Error("anthropic adapter: api key is required");
   }
   let connected = false;
+  let dynamicModels: ProviderModelInfo[] | null = null;
 
   async function getAuthHeaders(): Promise<Record<string, string>> {
     const base: Record<string, string> = {
@@ -91,7 +92,28 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
         : "Anthropic Subscription",
 
     async connect() {
-      // Anthropic doesn't expose a /models endpoint publicly
+      // Custom endpoints (e.g. Volcengine) may expose a /models endpoint;
+      // standard Anthropic does not, so we only try when baseUrl is overridden.
+      if (config.mode === "api_key" && config.baseUrl) {
+        try {
+          const headers = await getAuthHeaders();
+          const resp = await fetchWithTimeout(`${baseUrl}/models`, {
+            method: "GET",
+            headers,
+          });
+          if (resp.ok) {
+            const json = (await resp.json()) as { data: Array<{ id: string; context_window?: number }> };
+            if (Array.isArray(json.data) && json.data.length > 0) {
+              dynamicModels = json.data.map((m) => ({
+                id: m.id,
+                contextWindow: m.context_window ?? 0,
+              }));
+            }
+          }
+        } catch {
+          // ignore — fall back to configured model list
+        }
+      }
       connected = true;
     },
 
@@ -100,7 +122,9 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
     },
 
     listModels() {
-      return config.mode === "api_key" && config.models ? config.models : DEFAULT_MODELS;
+      if (dynamicModels) return dynamicModels;
+      if (config.mode === "api_key" && config.models) return config.models;
+      return DEFAULT_MODELS;
     },
 
     async chat(request: ChatRequest): Promise<ChatResponse> {

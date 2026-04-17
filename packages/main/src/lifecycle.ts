@@ -615,12 +615,13 @@ async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
           });
           break;
         case "volcengine_coding":
-          provider = createOpenAICompatProvider({
-            providerId: "volcengine_coding" as never,
-            displayName: "Volcengine (Coding Plan)",
+          provider = createAnthropicProvider({
+            mode: "api_key",
             apiKey,
-            baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-            defaultModels: [
+            baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+            overrideId: "volcengine_coding",
+            displayName: "Volcengine (Coding Plan)",
+            models: [
               { id: "doubao-pro-32k", contextWindow: 32000 },
               { id: "doubao-pro-128k", contextWindow: 128000 },
               { id: "doubao-lite-32k", contextWindow: 32000 },

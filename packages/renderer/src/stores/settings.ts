@@ -356,23 +356,14 @@ export const useSettings = create<SettingsState>((set) => ({
   },
 
   connectProvider: async (providerId, credentials) => {
-    alert(`[store] connectProvider called: ${providerId}`);
     if (isElectron()) {
       try {
-        alert(`[store] calling pmt.connectProvider...`);
-        const result = await pmt.connectProvider(providerId, credentials);
-        alert(`[store] connectProvider returned: ${JSON.stringify(result)}`);
-        alert(`[store] calling refresh...`);
-        // Refresh providers list after connection
+        await pmt.connectProvider(providerId, credentials);
         await useSettings.getState().refresh();
-        alert(`[store] refresh complete`);
       } catch (err) {
-        alert(`[store] connectProvider failed: ${err}`);
         console.error("[settings store] connectProvider failed:", err);
         throw err;
       }
-    } else {
-      alert("[store] Not in Electron!");
     }
   },
 

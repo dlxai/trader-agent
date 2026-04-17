@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm run *)"
+      "Bash(pnpm run *)",
+      "Bash(awk '{print $2}')",
+      "Bash(awk '{print $0}')",
+      "Bash(xargs grep *)",
+      "Bash(awk '/connectProvider/,/default:/' D:/work/polymarket-trader/packages/main/src/ipc.ts)",
+      "Bash(awk '/case \"anthropic_api\":/,/break;/{print NR\": \"$0}' D:/work/polymarket-trader/packages/main/src/ipc.ts)"
     ]
   }
 }

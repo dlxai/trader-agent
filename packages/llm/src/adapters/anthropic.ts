@@ -17,7 +17,19 @@ const DEFAULT_MODELS: ProviderModelInfo[] = [
 ];
 
 export type AnthropicConfig =
-  | { mode: "api_key"; apiKey: string; timeoutMs?: number }
+  | {
+      mode: "api_key";
+      apiKey: string;
+      timeoutMs?: number;
+      /** Override base URL for Anthropic-compatible third-party endpoints. */
+      baseUrl?: string;
+      /** Override provider ID when using a third-party endpoint. */
+      overrideId?: ProviderId;
+      /** Override display name. */
+      displayName?: string;
+      /** Override available models. */
+      models?: ProviderModelInfo[];
+    }
   | {
       mode: "subscription";
       readCliToken: () => Promise<string>;
@@ -61,12 +73,22 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
     }
   }
 
-  const providerId = config.mode === "api_key" ? "anthropic_api" : "anthropic_subscription";
+  const baseUrl =
+    config.mode === "api_key" && config.baseUrl
+      ? config.baseUrl.replace(/\/$/, "")
+      : ANTHROPIC_BASE_URL;
+  const providerId =
+    config.mode === "api_key"
+      ? (config.overrideId ?? "anthropic_api")
+      : "anthropic_subscription";
 
   return {
     id: providerId,
     authType: config.mode === "api_key" ? "api_key" : "cli_credential",
-    displayName: config.mode === "api_key" ? "Anthropic API" : "Anthropic Subscription",
+    displayName:
+      config.mode === "api_key"
+        ? (config.displayName ?? "Anthropic API")
+        : "Anthropic Subscription",
 
     async connect() {
       // Anthropic doesn't expose a /models endpoint publicly
@@ -78,7 +100,7 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
     },
 
     listModels() {
-      return DEFAULT_MODELS;
+      return config.mode === "api_key" && config.models ? config.models : DEFAULT_MODELS;
     },
 
     async chat(request: ChatRequest): Promise<ChatResponse> {
@@ -96,7 +118,7 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
       if (sysJoined) body.system = sysJoined;
       if (request.stop !== undefined) body.stop_sequences = request.stop;
 
-      const resp = await fetchWithTimeout(`${ANTHROPIC_BASE_URL}/messages`, {
+      const resp = await fetchWithTimeout(`${baseUrl}/messages`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),
@@ -133,7 +155,7 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
       const sysJoined = systemMessages.map((m) => m.content).join("\n\n");
       if (sysJoined) body.system = sysJoined;
 
-      const resp = await fetchWithTimeout(`${ANTHROPIC_BASE_URL}/messages`, {
+      const resp = await fetchWithTimeout(`${baseUrl}/messages`, {
         method: "POST",
         headers,
         body: JSON.stringify(body),

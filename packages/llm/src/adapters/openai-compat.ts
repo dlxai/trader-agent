@@ -18,6 +18,8 @@ export interface OpenAICompatConfig {
   extraHeaders?: Record<string, string>;
   /** Override request timeout in ms (default 30000). */
   timeoutMs?: number;
+  /** When true, throw on /models fetch failure instead of falling back to defaultModels. */
+  strictModels?: boolean;
 }
 
 interface OpenAIModelsResponse {
@@ -61,18 +63,19 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): LlmProvi
     displayName: config.displayName,
 
     async connect() {
-      try {
-        const resp = await fetchWithTimeout(`${config.baseUrl}/models`, {
-          method: "GET",
-          headers: buildHeaders(),
-        });
-        if (resp.ok) {
-          const json = (await resp.json()) as OpenAIModelsResponse;
-          models = json.data.map((m) => ({ id: m.id, contextWindow: 0 }));
-        } else {
-          models = config.defaultModels;
-        }
-      } catch {
+      const resp = await fetchWithTimeout(`${config.baseUrl}/models`, {
+        method: "GET",
+        headers: buildHeaders(),
+      });
+      if (resp.ok) {
+        const json = (await resp.json()) as OpenAIModelsResponse;
+        models = json.data.length > 0
+          ? json.data.map((m) => ({ id: m.id, contextWindow: 0 }))
+          : config.defaultModels;
+      } else if (config.strictModels) {
+        const text = await resp.text().catch(() => "");
+        throw new ProviderError(config.providerId, `Failed to fetch models: HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      } else {
         models = config.defaultModels;
       }
       connected = true;

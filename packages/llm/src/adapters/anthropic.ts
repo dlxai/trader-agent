@@ -95,24 +95,23 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
       // Custom endpoints (e.g. Volcengine) may expose a /models endpoint;
       // standard Anthropic does not, so we only try when baseUrl is overridden.
       if (config.mode === "api_key" && config.baseUrl) {
-        try {
-          const headers = await getAuthHeaders();
-          const resp = await fetchWithTimeout(`${baseUrl}/models`, {
-            method: "GET",
-            headers,
-          });
-          if (resp.ok) {
-            const json = (await resp.json()) as { data: Array<{ id: string; context_window?: number }> };
-            if (Array.isArray(json.data) && json.data.length > 0) {
-              dynamicModels = json.data.map((m) => ({
-                id: m.id,
-                contextWindow: m.context_window ?? 0,
-              }));
-            }
-          }
-        } catch {
-          // ignore — fall back to configured model list
+        const headers = await getAuthHeaders();
+        const resp = await fetchWithTimeout(`${baseUrl}/models`, {
+          method: "GET",
+          headers,
+        });
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => "");
+          throw new ProviderError(providerId, `Failed to fetch models: HTTP ${resp.status}: ${text.slice(0, 200)}`);
         }
+        const json = (await resp.json()) as { data: Array<{ id: string; context_window?: number }> };
+        if (!Array.isArray(json.data) || json.data.length === 0) {
+          throw new ProviderError(providerId, "No models returned from /models endpoint");
+        }
+        dynamicModels = json.data.map((m) => ({
+          id: m.id,
+          contextWindow: m.context_window ?? 0,
+        }));
       }
       connected = true;
     },
@@ -123,7 +122,7 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
 
     listModels() {
       if (dynamicModels) return dynamicModels;
-      if (config.mode === "api_key" && config.models) return config.models;
+      if (config.mode === "api_key" && config.models?.length) return config.models;
       return DEFAULT_MODELS;
     },
 

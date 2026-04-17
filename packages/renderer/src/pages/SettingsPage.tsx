@@ -279,12 +279,7 @@ export function SettingsPage() {
   };
 
   const handleSaveModel = async () => {
-    alert("handleSaveModel START");
-    if (!selectedProvider) {
-      alert("no selectedProvider!");
-      return;
-    }
-    alert(`selectedProvider: ${selectedProvider.id}`);
+    if (!selectedProvider) return;
     if (selectedProvider.authType !== "cli_credential" && !apiKeyInput.trim()) {
       setConnectError("API Key / Token is required");
       return;
@@ -293,23 +288,18 @@ export function SettingsPage() {
       setConnectError("Base URL is required");
       return;
     }
-    alert("about to call connectProvider...");
     setConnecting(true);
     setConnectError(null);
     try {
       const credentials: { apiKey?: string; baseUrl?: string } = {};
       if (apiKeyInput.trim()) credentials.apiKey = apiKeyInput.trim();
       if (baseUrlInput.trim()) credentials.baseUrl = baseUrlInput.trim();
-      alert(`calling connectProvider with ${selectedProvider.id}`);
       await connectProvider(selectedProvider.id, credentials);
-      alert("connectProvider done!");
       setShowModelModal(false);
     } catch (err) {
-      alert(`ERROR: ${err}`);
       setConnectError(String(err));
     } finally {
       setConnecting(false);
-      alert("handleSaveModel END");
     }
   };
 

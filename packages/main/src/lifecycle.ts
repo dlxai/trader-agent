@@ -622,6 +622,11 @@ async function loadStoredProviders(registry: ProviderRegistry): Promise<void> {
             overrideId: "volcengine_coding",
             displayName: "Volcengine (Coding Plan)",
             models: [
+              { id: "doubao-1-5-pro-32k", contextWindow: 32000 },
+              { id: "doubao-1-5-pro-128k", contextWindow: 128000 },
+              { id: "doubao-1-5-pro-256k", contextWindow: 256000 },
+              { id: "doubao-1-5-lite-32k", contextWindow: 32000 },
+              { id: "doubao-1-5-lite-128k", contextWindow: 128000 },
               { id: "doubao-pro-32k", contextWindow: 32000 },
               { id: "doubao-pro-128k", contextWindow: 128000 },
               { id: "doubao-lite-32k", contextWindow: 32000 },

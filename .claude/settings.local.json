@@ -1,12 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm run *)",
-      "Bash(awk '{print $2}')",
-      "Bash(awk '{print $0}')",
-      "Bash(xargs grep *)",
-      "Bash(awk '/connectProvider/,/default:/' D:/work/polymarket-trader/packages/main/src/ipc.ts)",
-      "Bash(awk '/case \"anthropic_api\":/,/break;/{print NR\": \"$0}' D:/work/polymarket-trader/packages/main/src/ipc.ts)"
+      "Bash(find *)",
+      "Bash(pnpm start *)",
+      "Bash(tasklist)",
+      "Bash(taskkill *)",
+      "Bash(curl *)",
+      "Bash(node -e ' *)",
+      "Bash(node --input-type=module -e ' *)",
+      "Bash(pnpm build *)",
+      "Bash(curl -s https://ark.cn-beijing.volces.com/api/coding/v3/models -H 'Authorization: Bearer 0047e394-7831-4cd5-83fb-e559e635efa4')",
+      "Bash(sqlite3 *)",
+      "Bash(pnpm exec ts-node -e ' *)",
+      "Bash(cmd.exe *)"
     ]
   }
 }

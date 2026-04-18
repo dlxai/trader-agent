@@ -16,3 +16,6 @@ packages/renderer/dist-electron/
 # Electron-builder output
 dist-electron/
 release/
+
+# Claude Code settings
+.claude/

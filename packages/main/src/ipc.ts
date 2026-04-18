@@ -539,8 +539,11 @@ export function registerIpcHandlers(deps: IpcDeps): void {
             displayName: "Volcengine (OpenAI Protocol)",
             apiKey: credentials.apiKey,
             baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3",
-            defaultModels: [],
-            strictModels: true,
+            defaultModels: [
+              { id: "claude-sonnet-4-6", contextWindow: 200000 },
+              { id: "claude-haiku-4-5", contextWindow: 200000 },
+            ],
+            strictModels: false,
           });
           break;
         default:
@@ -562,7 +565,6 @@ export function registerIpcHandlers(deps: IpcDeps): void {
         }
         return { success: true, providerId };
       } catch (err) {
-        alert(`Backend error: ${err}`);
         console.error("[ipc] connectProvider error:", err);
         // Check if it's a secrets storage error
         const errorMsg = String(err);

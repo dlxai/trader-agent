@@ -94,7 +94,9 @@ export function createAnthropicProvider(config: AnthropicConfig): LlmProvider {
     async connect() {
       // Custom endpoints (e.g. Volcengine) may expose a /models endpoint;
       // standard Anthropic does not, so we only try when baseUrl is overridden.
-      if (config.mode === "api_key" && config.baseUrl) {
+      // Skip if user provided models (including empty array to opt-out of auto-fetch).
+      const skipFetch = config.mode === "api_key" && config.models !== undefined;
+      if (config.mode === "api_key" && config.baseUrl && !skipFetch) {
         const headers = await getAuthHeaders();
         const resp = await fetchWithTimeout(`${baseUrl}/models`, {
           method: "GET",

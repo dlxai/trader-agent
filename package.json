@@ -1,45 +1,55 @@
 {
-  "name": "polymarket-trader",
+  "name": "@jmwl/autotrader",
   "private": true,
-  "version": "0.2.0",
-  "description": "Polymarket trading desktop application with OpenClaw plugin support",
-  "productName": "PolymarketTrader",
+  "version": "0.3.0",
+  "description": "WestGardeng AutoTrader - Web-based trading application with AI-powered strategy execution",
+  "productName": "WestGardeng AutoTrader",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
+    "dev": "pnpm --filter @jmwl/backend dev & pnpm --filter @jmwl/frontend dev",
+    "dev:backend": "pnpm --filter @jmwl/backend dev",
+    "dev:frontend": "pnpm --filter @jmwl/frontend dev",
     "build": "pnpm -r build",
+    "build:backend": "pnpm --filter @jmwl/backend build",
+    "build:frontend": "pnpm --filter @jmwl/frontend build",
+    "build:prod": "pnpm --filter @jmwl/backend build:prod && pnpm --filter @jmwl/frontend build:prod",
     "test": "pnpm -r test",
-    "test:run": "pnpm -r test:run",
+    "test:backend": "pnpm --filter @jmwl/backend test",
+    "test:frontend": "pnpm --filter @jmwl/frontend test",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
     "typecheck": "pnpm -r typecheck",
-    "clean": "pnpm -r clean",
-    "postinstall": "electron-builder install-app-deps",
-    "dev": "pnpm --filter @pmt/renderer dev",
-    "start": "pnpm build && pnpm --filter @pmt/main start",
-    "start:mock": "pnpm build && set MOCK_DATA=true && pnpm --filter @pmt/main start",
-    "start:openclaw": "set OPENCLAW_PLUGIN_MODE=true && pnpm build && pnpm --filter @pmt/main start",
-    "electron:dev": "pnpm --filter @pmt/main electron:dev",
-    "electron:dev:openclaw": "set OPENCLAW_PLUGIN_MODE=true && pnpm --filter @pmt/main electron:dev:win",
-    "dist": "pnpm build && electron-builder",
-    "dist:mac": "pnpm build && electron-builder --mac",
-    "dist:win": "pnpm build && electron-builder --win",
-    "dist:linux": "pnpm build && electron-builder --linux"
+    "clean": "pnpm -r clean && rm -rf node_modules/.cache",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "pnpm build && changeset publish",
+    "docker:build": "docker-compose build",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "db:migrate": "pnpm --filter @jmwl/backend db:migrate",
+    "db:seed": "pnpm --filter @jmwl/backend db:seed",
+    "setup": "bash scripts/setup.sh"
   },
   "devDependencies": {
-    "@electron/get": "^4.0.3",
-    "@types/node": "^22.10.5",
-    "electron": "^30.0.0",
-    "electron-builder": "^25.1.8",
-    "electron-rebuild": "^3.2.9",
-    "typescript": "^5.8.2"
+    "@changesets/changelog-github": "^0.5.0",
+    "@changesets/cli": "^2.27.1",
+    "prettier": "^3.2.5",
+    "typescript": "^5.4.5"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "electron",
       "better-sqlite3",
       "esbuild"
     ]
   },
   "engines": {
-    "node": ">=24",
-    "pnpm": ">=10"
-  }
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
 }

@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, status, HTTPException
 from fastapi.security import HTTPBearer
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,17 @@ async def register(
     request: UserRegisterRequest,
     db: AsyncSession = Depends(get_async_session),
 ):
-    """Register a new user."""
+    """Register a new user. Only the first user can register."""
+    # Check if any user already exists (only first user can register)
+    result = await db.execute(select(User))
+    existing_users = result.scalars().all()
+
+    if existing_users:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is closed. Only the first user can register.",
+        )
+
     # Check if email or username already exists
     result = await db.execute(
         select(User).where(

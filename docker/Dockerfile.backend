@@ -1,0 +1,71 @@
+# =============================================================================
+# WestGardeng AutoTrader Backend - Production Dockerfile
+# =============================================================================
+
+# Stage 1: Dependencies
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat python3 make g++
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@9
+
+# Copy workspace configuration
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/backend/package.json ./packages/backend/
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile --prod=false
+
+# Stage 2: Builder
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@9
+
+# Copy workspace files
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/backend/node_modules ./packages/backend/node_modules
+COPY package.json pnpm-workspace.yaml ./
+COPY packages/backend ./packages/backend
+
+# Build the application
+RUN pnpm --filter @jmwl/backend build
+
+# Stage 3: Runner
+FROM node:20-alpine AS runner
+RUN apk add --no-cache curl ca-certificates
+
+# Create non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 backend
+
+WORKDIR /app
+
+# Set production environment
+ENV NODE_ENV=production
+ENV PORT=3001
+
+# Copy built application
+COPY --from=builder --chown=backend:nodejs /app/packages/backend/dist ./dist
+COPY --from=builder --chown=backend:nodejs /app/packages/backend/package.json ./
+COPY --from=builder --chown=backend:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=backend:nodejs /app/packages/backend/node_modules ./node_modules
+
+# Create data directory with correct permissions
+RUN mkdir -p /app/data && chown -R backend:nodejs /app/data
+
+# Switch to non-root user
+USER backend
+
+# Expose port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3001/api/health || exit 1
+
+# Start the application
+CMD ["node", "dist/index.js"]

@@ -1,0 +1,89 @@
+"""Application configuration using Pydantic Settings."""
+
+from typing import List, Literal, Optional
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # Application
+    APP_NAME: str = "JMWL Trading Backend"
+    APP_VERSION: str = "0.1.0"
+    DEBUG: bool = False
+
+    # Server
+    HOST: str = "0.0.0.0"
+    PORT: int = 3001
+
+    # Database
+    DATABASE_TYPE: Literal["sqlite", "postgresql"] = "sqlite"
+    DATABASE_URL: Optional[str] = None
+
+    # PostgreSQL settings (used when DATABASE_TYPE=postgresql)
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "jmwl"
+    POSTGRES_PASSWORD: str = ""
+    POSTGRES_DB: str = "jmwl_trading"
+
+    # JWT
+    JWT_SECRET: str = "change-this-secret-key-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
+    JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # CORS
+    CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+
+    # Trading
+    DEFAULT_TRADING_MODE: Literal["paper", "live"] = "paper"
+    RISK_MANAGEMENT_ENABLED: bool = True
+
+    # WebSocket
+    WS_PING_INTERVAL: int = 30
+    WS_PING_TIMEOUT: int = 10
+
+    # Logging
+    LOG_LEVEL: str = "INFO"
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS origins from string or list."""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",")]
+        return v
+
+    @property
+    def async_database_url(self) -> str:
+        """Get async database URL."""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+
+        if self.DATABASE_TYPE == "postgresql":
+            return (
+                f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+                f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+            )
+        else:
+            return "sqlite+aiosqlite:///./jmwl_trading.db"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()
+
+
+settings = get_settings()

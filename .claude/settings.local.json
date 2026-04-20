@@ -44,7 +44,8 @@
       "Bash(npx:*)",
       "Bash(node --version)",
       "Bash(netstat:*)",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(/d/wework/trader-agent/docs/superpowers/plans/2025-01-20-python-unified-backend-implementation-plan.md:*)"
     ]
   }
 }

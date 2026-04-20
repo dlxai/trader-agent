@@ -1,0 +1,25 @@
+# Polymarket SDK (v2 最新官方版本)
+py-clob-client-v2>=0.2.0
+
+# Web3
+web3>=6.0.0
+eth-account>=0.11.0
+
+# Data processing
+pandas>=2.0.0
+numpy>=1.24.0
+polars>=0.20.0
+
+# Async
+aiohttp>=3.9.0
+aioredis>=2.0.0
+
+# Utilities
+pydantic>=2.5.0
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+structlog>=24.1.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0

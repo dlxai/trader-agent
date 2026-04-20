@@ -72,7 +72,7 @@ class Position(Base, TimestampMixin):
     )
 
     # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON field
+    position_metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON field
     tags: Mapped[Optional[list]] = mapped_column(nullable=True)  # JSON field
     notes: Mapped[Optional[str]] = mapped_column(nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual")  # manual, api, signal, auto

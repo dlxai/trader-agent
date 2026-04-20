@@ -18,6 +18,7 @@ from src.schemas.auth import (
 )
 from src.schemas.user import UserResponse
 from src.schemas.base import ApiResponse
+from src.dependencies import get_current_user
 from src.core.security import (
     verify_password,
     get_password_hash,

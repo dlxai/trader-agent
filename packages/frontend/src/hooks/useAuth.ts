@@ -19,7 +19,7 @@ export function useAuth() {
   const login = useCallback(
     async (credentials: LoginCredentials) => {
       try {
-        await storeLogin(credentials.email, credentials.password)
+        await storeLogin(credentials.username, credentials.password)
         navigate('/dashboard')
         return true
       } catch {

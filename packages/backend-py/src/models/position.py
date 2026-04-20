@@ -6,7 +6,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer, Boolean
+from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer, Boolean, JSON
 
 from .base import Base, TimestampMixin, UUIDMixin
 
@@ -72,8 +72,8 @@ class Position(Base, TimestampMixin):
     )
 
     # Metadata
-    position_metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON field
-    tags: Mapped[Optional[list]] = mapped_column(nullable=True)  # JSON field
+    position_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON field
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # JSON field
     notes: Mapped[Optional[str]] = mapped_column(nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual")  # manual, api, signal, auto
     signal_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

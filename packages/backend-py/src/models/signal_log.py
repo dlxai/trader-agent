@@ -148,8 +148,8 @@ class SignalLog(Base, TimestampMixin):
     actual_outcome: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Metadata
-    tags: Mapped[Optional[list]] = mapped_column(nullable=True)  # JSON list
-    metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON
+    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # JSON list
+    signal_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
     source: Mapped[str] = mapped_column(String(50), default="system")
     correlation_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)

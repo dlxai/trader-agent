@@ -105,9 +105,9 @@ class Strategy(Base, TimestampMixin):
     max_drawdown: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4), nullable=True)
 
     # Configuration storage
-    config: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON config
-    parameters: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON parameters
-    metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON metadata
+    config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON config
+    parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON parameters
+    strategy_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON metadata
 
     # Version control
     version: Mapped[int] = mapped_column(Integer, default=1)

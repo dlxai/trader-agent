@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer
+from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer, JSON
 
 from .base import Base, TimestampMixin, UUIDMixin
 
@@ -78,7 +78,7 @@ class Order(Base, TimestampMixin):
     slippage_percent: Mapped[Decimal] = mapped_column(Numeric(10, 4), default=Decimal("0"))
 
     # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON field
+    order_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON field
     notes: Mapped[Optional[str]] = mapped_column(nullable=True)
     source: Mapped[str] = mapped_column(String(50), default="manual")  # manual, api, signal, auto
     signal_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

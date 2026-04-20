@@ -120,14 +120,20 @@ apiClient.interceptors.response.use(
 // Auth API
 export const authApi = {
   async login(credentials: LoginCredentials): Promise<{ tokens: AuthTokens; user: User }> {
-    const response = await apiClient.post<ApiResponse<{ tokens: AuthTokens; user: User }>>('/auth/login', credentials)
+    const response = await apiClient.post<ApiResponse<{ tokens: AuthTokens; user: User }>>(
+      '/auth/login',
+      credentials
+    )
     const { tokens, user } = response.data.data
     setTokens(tokens)
     return { tokens, user }
   },
 
   async register(credentials: RegisterCredentials): Promise<{ tokens: AuthTokens; user: User }> {
-    const response = await apiClient.post<ApiResponse<{ tokens: AuthTokens; user: User }>>('/auth/register', credentials)
+    const response = await apiClient.post<ApiResponse<{ tokens: AuthTokens; user: User }>>(
+      '/auth/register',
+      credentials
+    )
     const { tokens, user } = response.data.data
     setTokens(tokens)
     return { tokens, user }

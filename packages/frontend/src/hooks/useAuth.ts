@@ -32,7 +32,7 @@ export function useAuth() {
   const register = useCallback(
     async (credentials: RegisterCredentials) => {
       try {
-        await storeRegister(credentials.email, credentials.password, credentials.name)
+        await storeRegister(credentials.email, credentials.username, credentials.password)
         navigate('/dashboard')
         return true
       } catch {

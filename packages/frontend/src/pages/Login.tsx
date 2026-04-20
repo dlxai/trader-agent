@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [formData, setFormData] = useState({
+    email: '',
     username: '',
     password: '',
     confirmPassword: '',
@@ -24,6 +25,14 @@ export default function LoginPage() {
 
   const validateForm = () => {
     const errors: Record<string, string> = {}
+
+    if (isRegisterMode) {
+      if (!formData.email) {
+        errors.email = 'Email is required'
+      } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+        errors.email = 'Please enter a valid email address'
+      }
+    }
 
     if (!formData.username) {
       errors.username = 'Username is required'
@@ -59,9 +68,13 @@ export default function LoginPage() {
 
     try {
       if (isRegisterMode) {
-        await register(formData.username, formData.password, formData.username)
+        await register({
+          email: formData.email,
+          username: formData.username,
+          password: formData.password,
+        })
       } else {
-        await login(formData.username, formData.password)
+        await login({ username: formData.username, password: formData.password })
       }
       navigate(from, { replace: true })
     } catch {
@@ -97,6 +110,25 @@ export default function LoginPage() {
             {error && (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">
                 {error}
+              </div>
+            )}
+
+            {isRegisterMode && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="email">
+                  Email
+                </label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="Enter your email"
+                  value={formData.email}
+                  onChange={(e) =>
+                    setFormData((prev) => ({ ...prev, email: e.target.value }))
+                  }
+                  error={formErrors.email}
+                  disabled={isLoading}
+                />
               </div>
             )}
 

@@ -80,8 +80,8 @@ class Strategy(Base, TimestampMixin):
     )
 
     # Market filters
-    allowed_markets: Mapped[Optional[list]] = mapped_column(nullable=True)  # JSON list
-    excluded_markets: Mapped[Optional[list]] = mapped_column(nullable=True)  # JSON list
+    allowed_markets: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # JSON list
+    excluded_markets: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # JSON list
     min_liquidity: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(19, 8),
         nullable=True,
@@ -92,7 +92,7 @@ class Strategy(Base, TimestampMixin):
     )
 
     # Time settings
-    trading_schedule: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON
+    trading_schedule: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
 
     # Performance tracking

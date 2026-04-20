@@ -125,8 +125,8 @@ class SignalLog(Base, TimestampMixin):
 
     # Reasoning
     signal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    technical_indicators: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON
-    fundamental_factors: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON
+    technical_indicators: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
+    fundamental_factors: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
     market_sentiment: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # AI/ML fields
@@ -135,7 +135,7 @@ class SignalLog(Base, TimestampMixin):
         Numeric(5, 4),
         nullable=True,
     )
-    feature_importance: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON
+    feature_importance: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
 
     # Review and feedback
     reviewed_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

@@ -3,12 +3,12 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { Eye, EyeOff, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { useAuthStore } from '@/stores/auth'
+import { useAuth } from '@/hooks/useAuth'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { login, register, isLoading, error, clearError } = useAuthStore()
+  const { login, register, isLoading, error, clearError } = useAuth()
 
   const [isRegisterMode, setIsRegisterMode] = useState(false)
   const [showPassword, setShowPassword] = useState(false)

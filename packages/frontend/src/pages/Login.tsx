@@ -28,31 +28,31 @@ export default function LoginPage() {
 
     if (isRegisterMode) {
       if (!formData.email) {
-        errors.email = 'Email is required'
+        errors.email = '请输入邮箱'
       } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-        errors.email = 'Please enter a valid email address'
+        errors.email = '请输入有效的邮箱地址'
       }
     }
 
     if (!formData.username) {
-      errors.username = 'Username is required'
+      errors.username = '请输入用户名'
     } else if (formData.username.length < 3) {
-      errors.username = 'Username must be at least 3 characters'
+      errors.username = '用户名至少3个字符'
     } else if (!/^[a-zA-Z0-9_]+$/.test(formData.username)) {
-      errors.username = 'Username can only contain letters, numbers, and underscores'
+      errors.username = '用户名只能包含字母、数字和下划线'
     }
 
     if (!formData.password) {
-      errors.password = 'Password is required'
+      errors.password = '请输入密码'
     } else if (formData.password.length < 8) {
-      errors.password = 'Password must be at least 8 characters'
+      errors.password = '密码至少8个字符'
     }
 
     if (isRegisterMode) {
       if (!formData.confirmPassword) {
-        errors.confirmPassword = 'Please confirm your password'
+        errors.confirmPassword = '请确认密码'
       } else if (formData.confirmPassword !== formData.password) {
-        errors.confirmPassword = 'Passwords do not match'
+        errors.confirmPassword = '两次密码不一致'
       }
     }
 
@@ -97,10 +97,10 @@ export default function LoginPage() {
             <Wallet className="h-8 w-8 text-black" />
           </div>
           <h1 className="mt-6 text-3xl font-bold tracking-tight">
-            WestGardeng AutoTrader
+            WestGardeng 量化交易
           </h1>
           <p className="mt-2 text-muted-foreground">
-            Professional trading platform
+            专业预测市场交易平台
           </p>
         </div>
 
@@ -116,12 +116,12 @@ export default function LoginPage() {
             {isRegisterMode && (
               <div className="space-y-2">
                 <label className="text-sm font-medium" htmlFor="email">
-                  Email
+                  邮箱
                 </label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="Enter your email"
+                  placeholder="请输入邮箱"
                   value={formData.email}
                   onChange={(e) =>
                     setFormData((prev) => ({ ...prev, email: e.target.value }))
@@ -134,12 +134,12 @@ export default function LoginPage() {
 
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="username">
-                Username
+                用户名
               </label>
               <Input
                 id="username"
                 type="text"
-                placeholder="Enter your username"
+                placeholder="请输入用户名"
                 value={formData.username}
                 onChange={(e) =>
                   setFormData((prev) => ({ ...prev, username: e.target.value }))
@@ -151,13 +151,13 @@ export default function LoginPage() {
 
             <div className="space-y-2">
               <label className="text-sm font-medium" htmlFor="password">
-                Password
+                密码
               </label>
               <div className="relative">
                 <Input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
+                  placeholder="请输入密码"
                   value={formData.password}
                   onChange={(e) =>
                     setFormData((prev) => ({
@@ -185,13 +185,13 @@ export default function LoginPage() {
             {isRegisterMode && (
               <div className="space-y-2">
                 <label className="text-sm font-medium" htmlFor="confirmPassword">
-                  Confirm Password
+                  确认密码
                 </label>
                 <div className="relative">
                   <Input
                     id="confirmPassword"
                     type={showConfirmPassword ? 'text' : 'password'}
-                    placeholder="Confirm your password"
+                    placeholder="请再次输入密码"
                     value={formData.confirmPassword}
                     onChange={(e) =>
                       setFormData((prev) => ({
@@ -217,28 +217,13 @@ export default function LoginPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between text-sm">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" className="rounded border-void-300" />
-                <span className="text-muted-foreground">Remember me</span>
-              </label>
-              {!isRegisterMode && (
-                <a
-                  href="#"
-                  className="text-emerald-500 hover:text-emerald-400"
-                >
-                  Forgot password?
-                </a>
-              )}
-            </div>
-
             <Button
               type="submit"
               className="w-full"
               size="lg"
               isLoading={isLoading}
             >
-              {isRegisterMode ? 'Create Account' : 'Sign in'}
+              {isRegisterMode ? '注册账号' : '登录'}
             </Button>
           </form>
         </div>
@@ -247,22 +232,22 @@ export default function LoginPage() {
         <p className="text-center text-sm text-muted-foreground">
           {isRegisterMode ? (
             <>
-              Already have an account?{' '}
+              已有账号？{' '}
               <button
                 onClick={toggleMode}
                 className="text-emerald-500 hover:text-emerald-400 font-medium"
               >
-                Sign in
+                立即登录
               </button>
             </>
           ) : (
             <>
-              First time?{' '}
+              首次使用？{' '}
               <button
                 onClick={toggleMode}
                 className="text-emerald-500 hover:text-emerald-400 font-medium"
               >
-                Create account
+                创建账号
               </button>
             </>
           )}

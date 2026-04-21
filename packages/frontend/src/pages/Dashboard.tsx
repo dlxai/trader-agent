@@ -121,9 +121,9 @@ function RecentActivity() {
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
           <ListOrdered className="h-6 w-6 text-muted-foreground" />
         </div>
-        <h3 className="mt-4 text-lg font-semibold">No activity yet</h3>
+        <h3 className="mt-4 text-lg font-semibold">暂无活动</h3>
         <p className="mt-2 max-w-sm text-sm text-muted-foreground">
-          Start trading on Polymarket to see your activity here
+          开始在 Polymarket 交易后将在此显示您的活动
         </p>
       </div>
     )
@@ -201,32 +201,32 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-muted-foreground">
-          Welcome back! Here's your Polymarket trading overview.
+          欢迎回来！这是您的 Polymarket 交易概览。
         </p>
       </div>
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total Portfolio Value"
+          title="组合总价值"
           value={formatCurrency(totalValue)}
           icon={DollarSign}
           isLoading={portfoliosLoading}
         />
         <StatCard
-          title="Total P&L"
+          title="总盈亏"
           value={formatCurrency(totalPnl)}
           icon={totalPnl >= 0 ? TrendingUp : TrendingDown}
           isLoading={portfoliosLoading}
         />
         <StatCard
-          title="Active Positions"
+          title="持仓数量"
           value={formatNumber(activePositions)}
           icon={Activity}
           isLoading={positionsLoading}
         />
         <StatCard
-          title="Pending Orders"
+          title="待处理订单"
           value={formatNumber(pendingOrders)}
           icon={BarChart3}
           isLoading={ordersLoading}
@@ -238,7 +238,7 @@ export default function DashboardPage() {
         {/* Portfolio Performance */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Portfolio Performance</CardTitle>
+            <CardTitle>组合表现</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[300px] flex items-center justify-center text-muted-foreground">
@@ -252,7 +252,7 @@ export default function DashboardPage() {
         {/* Portfolios Summary */}
         <Card>
           <CardHeader>
-            <CardTitle>Portfolios</CardTitle>
+            <CardTitle>投资组合</CardTitle>
           </CardHeader>
           <CardContent>
             {portfolios.length === 0 ? (
@@ -278,7 +278,7 @@ export default function DashboardPage() {
       {/* Recent Activity */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Recent Activity</CardTitle>
+          <CardTitle>最近活动</CardTitle>
         </CardHeader>
         <CardContent>
           <RecentActivity />

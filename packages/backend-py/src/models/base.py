@@ -3,13 +3,11 @@
 from datetime import datetime
 from uuid import uuid4, UUID
 
-from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import DateTime
 
 
-class Base(DeclarativeBase):
-    """Base class for all models."""
-    pass
+# Base is imported from database.py in each model file to avoid circular imports
 
 
 class TimestampMixin:

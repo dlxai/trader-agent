@@ -8,7 +8,8 @@ from uuid import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer, JSON
 
-from .base import Base, TimestampMixin, UUIDMixin
+from src.database import Base
+from .base import TimestampMixin, UUIDMixin
 
 
 class Order(Base, TimestampMixin):

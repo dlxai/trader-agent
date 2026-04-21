@@ -65,7 +65,7 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: PortfolioSummary; o
       <CardContent className="space-y-4">
         {/* Total Value */}
         <div className="flex items-baseline justify-between">
-          <span className="text-sm text-muted-foreground">Total Value</span>
+          <span className="text-sm text-muted-foreground">总价值</span>
           <span className="text-2xl font-bold font-mono">
             {formatCurrency(Number(portfolio.current_balance))}
           </span>
@@ -87,7 +87,7 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: PortfolioSummary; o
               )}
             </div>
             <div>
-              <p className="text-sm font-medium">Unrealized P&L</p>
+              <p className="text-sm font-medium">未实现盈亏</p>
               <p className="text-xs text-muted-foreground">
                 {formatPercentage(Number(portfolio.total_pnl_percent))}
               </p>
@@ -107,11 +107,11 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: PortfolioSummary; o
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="flex-1">
             <PieChart className="mr-2 h-4 w-4" />
-            Details
+            详情
           </Button>
           <Button variant="outline" size="sm" className="flex-1">
             <DollarSign className="mr-2 h-4 w-4" />
-            Trade
+            交易
           </Button>
         </div>
       </CardContent>
@@ -162,32 +162,32 @@ export default function PortfoliosPage() {
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Portfolios</h1>
+          <h1 className="text-2xl font-bold tracking-tight">投资组合</h1>
           <p className="text-muted-foreground">
-            Manage your investment portfolios and track performance
+            管理您的投资组合并跟踪表现
           </p>
         </div>
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button>
               <Plus className="mr-2 h-4 w-4" />
-              New Portfolio
+              新建组合
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Create New Portfolio</DialogTitle>
+              <DialogTitle>创建新投资组合</DialogTitle>
               <DialogDescription>
-                Create a new portfolio to track your investments
+                创建新的投资组合来跟踪您的投资
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreate}>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label htmlFor="name">Portfolio Name</Label>
+                  <Label htmlFor="name">组合名称</Label>
                   <Input
                     id="name"
-                    placeholder="My Portfolio"
+                    placeholder="我的组合"
                     value={newPortfolio.name}
                     onChange={(e) =>
                       setNewPortfolio((prev) => ({ ...prev, name: e.target.value }))
@@ -196,10 +196,10 @@ export default function PortfoliosPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="description">Description (Optional)</Label>
+                  <Label htmlFor="description">描述（可选）</Label>
                   <Input
                     id="description"
-                    placeholder="Description"
+                    placeholder="描述"
                     value={newPortfolio.description}
                     onChange={(e) =>
                       setNewPortfolio((prev) => ({
@@ -216,10 +216,10 @@ export default function PortfoliosPage() {
                   variant="outline"
                   onClick={() => setIsCreateDialogOpen(false)}
                 >
-                  Cancel
+                  取消
                 </Button>
                 <Button type="submit" isLoading={createMutation.isPending}>
-                  Create
+                  创建
                 </Button>
               </DialogFooter>
             </form>
@@ -244,16 +244,16 @@ export default function PortfoliosPage() {
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
               <Briefcase className="h-6 w-6 text-muted-foreground" />
             </div>
-            <h3 className="mt-4 text-lg font-semibold">No portfolios yet</h3>
+            <h3 className="mt-4 text-lg font-semibold">暂无投资组合</h3>
             <p className="mt-2 max-w-sm text-center text-sm text-muted-foreground">
-              Create your first portfolio to start tracking your investments
+              创建您的第一个投资组合来开始跟踪您的投资
             </p>
             <Button
               className="mt-6"
               onClick={() => setIsCreateDialogOpen(true)}
             >
               <Plus className="mr-2 h-4 w-4" />
-              Create Portfolio
+              创建组合
             </Button>
           </CardContent>
         </Card>

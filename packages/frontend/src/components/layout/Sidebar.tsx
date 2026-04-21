@@ -26,35 +26,40 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   {
-    label: 'Dashboard',
+    label: '仪表板',
     icon: LayoutDashboard,
     href: '/dashboard',
   },
   {
-    label: 'Portfolios',
+    label: '投资组合',
     icon: Briefcase,
     href: '/portfolios',
   },
   {
-    label: 'Positions',
+    label: '持仓',
     icon: TrendingUp,
     href: '/positions',
   },
   {
-    label: 'Orders',
+    label: '订单',
     icon: ListOrdered,
     href: '/orders',
   },
   {
-    label: 'Providers',
+    label: '数据源',
     icon: Plug,
     href: '/providers',
+  },
+  {
+    label: '钱包',
+    icon: Wallet,
+    href: '/wallets',
   },
 ]
 
 const bottomNavItems: NavItem[] = [
   {
-    label: 'Settings',
+    label: '设置',
     icon: Settings,
     href: '/settings',
   },

@@ -6,10 +6,17 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     AsyncEngine,
 )
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import declarative_base, DeclarativeBase
 from sqlalchemy.pool import NullPool
 
 from src.config import settings
+
+
+# 使用 SQLAlchemy 2.0 DeclarativeBase
+class Base(DeclarativeBase):
+    """Base class for all models."""
+    pass
+
 
 # Create async engine
 engine: AsyncEngine = create_async_engine(
@@ -28,8 +35,8 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
-# Base class for models
-Base = declarative_base()
+# Import all models to register them with Base.metadata
+from src.models import User, Portfolio, Position, Order, Strategy, Wallet, Provider  # noqa: F401, E402
 
 
 async def get_async_session() -> AsyncSession:

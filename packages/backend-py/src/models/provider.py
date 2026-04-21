@@ -5,9 +5,10 @@ from typing import Optional
 from uuid import uuid4, UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text, JSON
 
-from .base import Base, TimestampMixin
+from src.database import Base
+from .base import TimestampMixin
 
 
 class Provider(Base, TimestampMixin):
@@ -53,7 +54,7 @@ class Provider(Base, TimestampMixin):
     total_tokens: Mapped[int] = mapped_column(default=0)
 
     # Metadata
-    metadata: Mapped[Optional[dict]] = mapped_column(nullable=True)  # JSON
+    provider_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="providers")

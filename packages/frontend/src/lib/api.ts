@@ -20,10 +20,11 @@ import type {
   UpdatePortfolioRequest,
   CreateOrderRequest,
   CreateProviderRequest,
-  PriceQuote,
-  Candle,
   UserSettings,
-  DashboardStats,
+  Wallet,
+  CreateWalletRequest,
+  UpdateWalletRequest,
+  WalletTestResult,
 } from '@/types'
 
 // API base URL
@@ -418,108 +419,44 @@ export const providersApi = {
   },
 }
 
-// Market data API
-export const marketDataApi = {
-  async getQuote(symbol: string, exchange?: string): Promise<PriceQuote> {
-    const response = await apiClient.get<ApiResponse<PriceQuote>>('/market/quote', {
-      params: { symbol, exchange },
-    })
+// Wallets API (Polymarket)
+export const walletsApi = {
+  async getAll(): Promise<Wallet[]> {
+    const response = await apiClient.get<ApiResponse<{ items: Wallet[] }>>('/wallets')
+    return response.data.data.items
+  },
+
+  async getById(id: string): Promise<Wallet> {
+    const response = await apiClient.get<ApiResponse<Wallet>>(`/wallets/${id}`)
     return response.data.data
   },
 
-  async getQuotes(symbols: string[]): Promise<PriceQuote[]> {
-    const response = await apiClient.get<ApiResponse<PriceQuote[]>>('/market/quotes', {
-      params: { symbols: symbols.join(',') },
-    })
+  async create(data: CreateWalletRequest): Promise<Wallet> {
+    const response = await apiClient.post<ApiResponse<Wallet>>('/wallets', data)
     return response.data.data
   },
 
-  async getCandles(
-    symbol: string,
-    params: {
-      exchange?: string
-      interval?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d' | '1w'
-      from?: string
-      to?: string
-      limit?: number
-    }
-  ): Promise<Candle[]> {
-    const response = await apiClient.get<ApiResponse<Candle[]>>('/market/candles', {
-      params: { symbol, ...params },
-    })
+  async update(id: string, data: UpdateWalletRequest): Promise<Wallet> {
+    const response = await apiClient.patch<ApiResponse<Wallet>>(`/wallets/${id}`, data)
     return response.data.data
   },
 
-  async searchSymbols(query: string): Promise<{
-    symbol: string
-    name: string
-    exchange: string
-    type: string
-  }[]> {
-    const response = await apiClient.get<ApiResponse<{
-      symbol: string
-      name: string
-      exchange: string
-      type: string
-    }[]>>('/market/search', {
-      params: { q: query },
-    })
+  async delete(id: string): Promise<void> {
+    await apiClient.delete(`/wallets/${id}`)
+  },
+
+  async testConnection(id: string): Promise<WalletTestResult> {
+    const response = await apiClient.post<ApiResponse<WalletTestResult>>(`/wallets/${id}/test`)
+    return response.data.data
+  },
+
+  async setDefault(id: string): Promise<Wallet> {
+    const response = await apiClient.post<ApiResponse<Wallet>>(`/wallets/default/${id}/set`)
     return response.data.data
   },
 }
 
-// Dashboard API
-export const dashboardApi = {
-  async getStats(): Promise<DashboardStats> {
-    const response = await apiClient.get<ApiResponse<DashboardStats>>('/dashboard/stats')
-    return response.data.data
-  },
-
-  async getPortfolioHistory(params?: { from?: string; to?: string }): Promise<{
-    date: string
-    value: number
-    pnl: number
-  }[]> {
-    const response = await apiClient.get<ApiResponse<{
-      date: string
-      value: number
-      pnl: number
-    }[]>>('/dashboard/history', { params })
-    return response.data.data
-  },
-
-  async getAssetAllocation(): Promise<{
-    symbol: string
-    value: number
-    percentage: number
-  }[]> {
-    const response = await apiClient.get<ApiResponse<{
-      symbol: string
-      value: number
-      percentage: number
-    }[]>>('/dashboard/allocation')
-    return response.data.data
-  },
-
-  async getRecentActivity(): Promise<{
-    id: string
-    type: 'trade' | 'order' | 'deposit' | 'withdrawal'
-    description: string
-    amount?: number
-    timestamp: string
-  }[]> {
-    const response = await apiClient.get<ApiResponse<{
-      id: string
-      type: 'trade' | 'order' | 'deposit' | 'withdrawal'
-      description: string
-      amount?: number
-      timestamp: string
-    }[]>>('/dashboard/activity')
-    return response.data.data
-  },
-}
-
-// Settings API
+// Settings API (uses /api/users/me/preferences)
 export const settingsApi = {
   async getSettings(): Promise<UserSettings> {
     const response = await apiClient.get<ApiResponse<UserSettings>>('/settings')

@@ -1,11 +1,13 @@
 """SQLAlchemy models package."""
 
-from .base import Base, TimestampMixin, UUIDMixin
+from .base import TimestampMixin, UUIDMixin
 from .user import User, RefreshToken
 from .portfolio import Portfolio
 from .position import Position
 from .order import Order
 from .strategy import Strategy
+from .wallet import Wallet
+from .provider import Provider
 
 __all__ = [
     "Base",
@@ -17,4 +19,6 @@ __all__ = [
     "Position",
     "Order",
     "Strategy",
+    "Wallet",
+    "Provider",
 ]

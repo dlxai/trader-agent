@@ -11,6 +11,7 @@ const PortfoliosPage = lazy(() => import('@/pages/Portfolios'))
 const PositionsPage = lazy(() => import('@/pages/Positions'))
 const OrdersPage = lazy(() => import('@/pages/Orders'))
 const ProvidersPage = lazy(() => import('@/pages/Providers'))
+const WalletsPage = lazy(() => import('@/pages/Wallets'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 const NotFoundPage = lazy(() => import('@/pages/NotFound'))
 
@@ -70,6 +71,10 @@ const routes: RouteObject[] = [
       {
         path: 'providers',
         element: withSuspense(ProvidersPage),
+      },
+      {
+        path: 'wallets',
+        element: withSuspense(WalletsPage),
       },
       {
         path: 'settings',

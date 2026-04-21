@@ -1095,9 +1095,9 @@ class CompoundSignalGenerator(SignalGenerator):
 
 # 公开接口
 __all__ = [
+    'Signal',
     'SignalType',
     'SignalDirection',
-    'Signal',
     'SignalGenerator',
     'OddsBiasSignalGenerator',
     'TimeDecaySignalGenerator',
@@ -1105,4 +1105,269 @@ __all__ = [
     'CapitalFlowSignalGenerator',
     'InformationEdgeSignalGenerator',
     'CompoundSignalGenerator',
+    'LayeredSignalPipeline',
 ]
+
+
+# =============================================================================
+# LAYERED SIGNAL PIPELINE - 分层信号管道 (串行过滤)
+# 流程: 数据 → 指标计算 → 市场结构分析 → 技术结论 → LLM推理
+# =============================================================================
+
+class LayeredSignalPipeline:
+    """
+    分层信号管道 - 串行过滤系统
+
+    Layer 1: 风险检查 (熔断机制)
+    Layer 2: 赔率偏向过滤 (至少5%优势)
+    Layer 3: 时间价值 + 订单簿确认
+    Layer 4: 资金流验证
+    Layer 5: LLM最终决策
+    """
+
+    def __init__(
+        self,
+        llm_client=None,  # LLM客户端，用于第5层
+        config: Dict[str, Any] = None
+    ):
+        self.logger = logging.getLogger(__name__)
+        self.llm_client = llm_client
+
+        # 配置
+        self.config = config or {}
+        self.min_odds_edge = self.config.get('min_odds_edge', 0.05)  # 最小赔率优势 5%
+        self.min_composite_confidence = self.config.get('min_composite_confidence', 0.65)
+        self.daily_loss_limit = self.config.get('daily_loss_limit', 0.02)  # 日内亏损2%熔断
+
+        # 信号生成器
+        self.odds_generator = OddsBiasSignalGenerator()
+        self.time_generator = TimeDecaySignalGenerator()
+        self.orderbook_generator = OrderbookPressureSignalGenerator()
+        self.capital_flow_generator = CapitalFlowSignalGenerator()
+        self.information_generator = InformationEdgeSignalGenerator()
+
+        # 风险状态
+        self.daily_pnl = 0.0
+        self.consecutive_losses = 0
+        self.last_trade_time = None
+
+        # 初始化子生成器
+        self.compound_generator = CompoundSignalGenerator()
+        self.compound_generator.add_generator(self.odds_generator)
+        self.compound_generator.add_generator(self.time_generator)
+        self.compound_generator.add_generator(self.orderbook_generator)
+        self.compound_generator.add_generator(self.capital_flow_generator)
+        self.compound_generator.add_generator(self.information_generator)
+
+    async def generate_signal(self, market_data: Dict[str, Any]) -> Optional[Signal]:
+        """
+        串行分层信号生成
+
+        Returns:
+            Signal 或 None (如果任何一层被过滤)
+        """
+        market_id = market_data.get('market_id', 'unknown')
+
+        # ===== Layer 1: 风险检查 =====
+        if not self._check_risk_limits():
+            self.logger.info(f"[Layer1] Risk frozen for {market_id} - daily limit reached")
+            return None
+
+        # ===== Layer 2: 赔率偏向过滤 (第一关) =====
+        odds_signal = await self.odds_generator.generate(market_data)
+        if not odds_signal or odds_signal.direction == SignalDirection.NEUTRAL:
+            self.logger.debug(f"[Layer2] {market_id} - No odds bias, filtered")
+            return None
+
+        # 检查赔率优势是否足够
+        edge = abs(odds_signal.strength)
+        if edge < self.min_odds_edge:
+            self.logger.debug(f"[Layer2] {market_id} - Odds edge {edge:.1%} < {self.min_odds_edge:.1%}, filtered")
+            return None
+
+        self.logger.info(f"[Layer2] {market_id} - Odds bias passed, edge={edge:.1%}, direction={odds_signal.direction.value}")
+
+        # ===== Layer 3: 时间价值 + 订单簿确认 =====
+        time_signal = await self.time_generator.generate(market_data)
+        orderbook_signal = await self.orderbook_generator.generate(market_data)
+
+        # 订单簿方向必须与赔率方向一致
+        if orderbook_signal and orderbook_signal.direction != SignalDirection.NEUTRAL:
+            if orderbook_signal.direction != odds_signal.direction:
+                self.logger.debug(f"[Layer3] {market_id} - Orderbook direction mismatch, filtered")
+                return None
+
+        # 时间价值检查 (如果事件临近时间太短，忽略时间衰减信号)
+        time_left_hours = market_data.get('event_hours_until', 999)
+        if time_left_hours > 1:  # 超过1小时
+            if time_signal and time_signal.direction != SignalDirection.NEUTRAL:
+                if time_signal.direction != odds_signal.direction:
+                    self.logger.debug(f"[Layer3] {market_id} - Time decay direction mismatch")
+                    return None
+
+        self.logger.info(f"[Layer3] {market_id} - Structure checks passed")
+
+        # ===== Layer 4: 资金流验证 =====
+        flow_signal = await self.capital_flow_generator.generate(market_data)
+        if flow_signal and flow_signal.direction != SignalDirection.NEUTRAL:
+            # 资金流方向最好与主要方向一致，或者保持中性
+            if flow_signal.direction != odds_signal.direction and flow_signal.direction != SignalDirection.NEUTRAL:
+                self.logger.debug(f"[Layer4] {market_id} - Capital flow against main direction")
+
+        self.logger.info(f"[Layer4] {market_id} - Capital flow check passed")
+
+        # ===== Layer 5: LLM最终决策 =====
+        if self.llm_client:
+            decision = await self._llm_decision(market_data, odds_signal, time_signal, orderbook_signal, flow_signal)
+            if not decision:
+                self.logger.info(f"[Layer5] {market_id} - LLM rejected the signal")
+                return None
+
+        # ===== 生成最终信号 =====
+        final_signal = await self.compound_generator.generate(market_data)
+
+        if final_signal and final_signal.confidence >= self.min_composite_confidence:
+            self.logger.info(f"[Layer5] {market_id} - Signal PASSED, confidence={final_signal.confidence:.1%}")
+            return final_signal
+        else:
+            self.logger.info(f"[Layer5] {market_id} - Confidence too low: {final_signal.confidence if final_signal else 0:.1%}")
+            return None
+
+    def _check_risk_limits(self) -> bool:
+        """
+        Layer 1: 风险检查
+
+        - 日内亏损超过2%熔断
+        - 连续亏损3次后熔断
+        """
+        # 日内亏损检查
+        if self.daily_pnl <= -self.daily_loss_limit:
+            self.logger.warning(f"Daily loss limit reached: {self.daily_pnl:.1%}")
+            return False
+
+        # 连续亏损检查
+        if self.consecutive_losses >= 3:
+            self.logger.warning(f"Consecutive losses limit reached: {self.consecutive_losses}")
+            return False
+
+        return True
+
+    async def _llm_decision(
+        self,
+        market_data: Dict,
+        odds_signal: Signal,
+        time_signal: Signal,
+        orderbook_signal: Signal,
+        flow_signal: Signal
+    ) -> bool:
+        """
+        Layer 5: LLM最终决策
+
+        将技术分析结论翻译成自然语言，让LLM做最终推理
+        """
+        if not self.llm_client:
+            return True
+
+        # 构建分析摘要 (不是原始数据!)
+        analysis_summary = self._build_analysis_summary(
+            market_data, odds_signal, time_signal, orderbook_signal, flow_signal
+        )
+
+        # 调用LLM
+        prompt = f"""你是一个专业的Polymarket预测市场交易员。
+
+市场分析摘要:
+{analysis_summary}
+
+根据以上分析，决定是否执行交易。回复格式:
+- 如果决定买入: BUY <原因简短说明>
+- 如果决定卖出: SELL <原因简短说明>
+- 如果决定等待: WAIT <原因简短说明>"""
+
+        try:
+            response = await self.llm_client.chat(prompt)
+            if response and 'BUY' in response.upper():
+                return True
+            elif response and 'SELL' in response.upper():
+                # 这里返回True，因为SELL方向也会被主逻辑处理
+                return True
+            else:
+                return False
+        except Exception as e:
+            self.logger.error(f"LLM decision failed: {e}")
+            return False  # LLM失败时保守处理
+
+    def _build_analysis_summary(
+        self,
+        market_data: Dict,
+        odds_signal: Signal,
+        time_signal: Signal,
+        orderbook_signal: Signal,
+        flow_signal: Signal
+    ) -> str:
+        """构建分析摘要 - 将数值翻译成结论语言"""
+
+        market_id = market_data.get('market_id', 'unknown')
+        yes_price = market_data.get('yes_price', 0.5)
+        no_price = market_data.get('no_price', 0.5)
+        volume = market_data.get('volume', 0)
+        event_hours = market_data.get('event_hours_until', 0)
+
+        # 趋势方向
+        trend = "看涨" if odds_signal.direction == SignalDirection.BULLISH else "看跌" if odds_signal.direction == SignalDirection.BEARISH else "中性"
+
+        # 强度描述
+        edge_pct = abs(odds_signal.strength) * 100
+        if edge_pct >= 10:
+            edge_desc = "非常强"
+        elif edge_pct >= 5:
+            edge_desc = "较强"
+        else:
+            edge_desc = "一般"
+
+        # 时间价值
+        if event_hours > 24:
+            time_desc = f"事件还有{event_hours:.0f}小时，时间价值高"
+        elif event_hours > 1:
+            time_desc = f"事件还有{event_hours:.1f}小时，时间价值中等"
+        else:
+            time_desc = "即将到期，时间价值低"
+
+        # 订单簿
+        if orderbook_signal and orderbook_signal.strength > 0:
+            ob_desc = f"订单簿压力{('买方' if orderbook_signal.direction == SignalDirection.BULLISH else '卖方')}占优"
+        else:
+            ob_desc = "订单簿平衡"
+
+        # 资金流
+        if flow_signal and flow_signal.strength > 0.5:
+            flow_desc = "有大额资金流入"
+        elif flow_signal and flow_signal.strength < -0.5:
+            flow_desc = "有大额资金流出"
+        else:
+            flow_desc = "资金流平稳"
+
+        # 组装摘要
+        summary = f"""
+市场: {market_id}
+当前价格: Yes={yes_price:.1%}, No={no_price:.1%}
+趋势: {trend}, 概率优势: {edge_desc}({edge_pct:.1f}%)
+时间: {time_desc}
+订单簿: {ob_desc}
+资金流: {flow_desc}
+"""
+        return summary
+
+    def update_pnl(self, pnl: float):
+        """更新每日盈亏"""
+        self.daily_pnl += pnl
+        if pnl < 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+        self.last_trade_time = datetime.now()
+
+    def reset_daily(self):
+        """重置每日状态 (UTC 0点调用)"""
+        self.daily_pnl = 0.0
+        self.consecutive_losses = 0

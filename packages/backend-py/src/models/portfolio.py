@@ -7,7 +7,8 @@ from uuid import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, Numeric, ForeignKey, Integer
 
-from .base import Base, TimestampMixin, UUIDMixin
+from src.database import Base
+from .base import TimestampMixin, UUIDMixin
 from .signal_log import SignalLog
 
 

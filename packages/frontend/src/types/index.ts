@@ -129,6 +129,47 @@ export interface CreateProviderRequest {
   credentials?: Record<string, string>;
 }
 
+// Wallet types (Polymarket)
+export interface Wallet {
+  id: string;
+  user_id: string;
+  name: string;
+  address?: string;
+  proxy_url?: string;
+  is_active: boolean;
+  is_default: boolean;
+  status: 'active' | 'inactive' | 'error';
+  last_used_at?: string;
+  last_error?: string;
+  error_count: number;
+  usdc_balance?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWalletRequest {
+  name: string;
+  private_key: string;
+  proxy_url?: string;
+  is_default?: boolean;
+}
+
+export interface UpdateWalletRequest {
+  name?: string;
+  private_key?: string;
+  proxy_url?: string;
+  is_active?: boolean;
+  is_default?: boolean;
+}
+
+export interface WalletTestResult {
+  success: boolean;
+  message: string;
+  address?: string;
+  balance?: string;
+  error?: string;
+}
+
 // Market data types
 export interface PriceQuote {
   symbol: string;

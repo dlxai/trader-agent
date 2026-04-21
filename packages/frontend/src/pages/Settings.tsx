@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/Label'
 import { Separator } from '@/components/ui/Separator'
 import { Switch } from '@/components/ui/Switch'
 import { cn } from '@/lib/utils'
+import { useThemeStore } from '@/stores/theme'
 
 interface SettingsSectionProps {
   title: string
@@ -31,13 +32,12 @@ function SettingsSection({ title, description, children }: SettingsSectionProps)
 }
 
 function AppearanceSettings() {
-  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('dark')
-  const resolvedTheme = theme === 'system' ? 'dark' : theme
+  const { theme, resolvedTheme, setTheme } = useThemeStore()
 
   return (
     <SettingsSection
-      title="Appearance"
-      description="Customize how WestGardeng looks on your device"
+      title="外观"
+      description="自定义 WestGardeng 在您设备上的显示效果"
     >
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-4">
@@ -51,7 +51,7 @@ function AppearanceSettings() {
             )}
           >
             <Sun className="h-6 w-6" />
-            <span className="text-sm font-medium">Light</span>
+            <span className="text-sm font-medium">浅色</span>
           </button>
           <button
             onClick={() => setTheme('dark')}
@@ -63,7 +63,7 @@ function AppearanceSettings() {
             )}
           >
             <Moon className="h-6 w-6" />
-            <span className="text-sm font-medium">Dark</span>
+            <span className="text-sm font-medium">深色</span>
           </button>
           <button
             onClick={() => setTheme('system')}
@@ -75,11 +75,11 @@ function AppearanceSettings() {
             )}
           >
             <Monitor className="h-6 w-6" />
-            <span className="text-sm font-medium">System</span>
+            <span className="text-sm font-medium">跟随系统</span>
           </button>
         </div>
         <p className="text-sm text-muted-foreground">
-          Current theme: <span className="font-medium capitalize">{resolvedTheme}</span>
+          当前主题: <span className="font-medium capitalize">{resolvedTheme === 'dark' ? '深色' : '浅色'}</span>
         </p>
       </div>
     </SettingsSection>
@@ -97,15 +97,15 @@ function NotificationSettings() {
 
   return (
     <SettingsSection
-      title="Notifications"
-      description="Choose what notifications you want to receive"
+      title="通知"
+      description="选择您希望接收的通知类型"
     >
       <div className="space-y-4">
         <div className="flex items-center justify-between rounded-lg border border-void-300 p-4">
           <div className="space-y-0.5">
-            <Label className="text-base">Email Notifications</Label>
+            <Label className="text-base">邮件通知</Label>
             <p className="text-sm text-muted-foreground">
-              Receive notifications via email
+              通过邮件接收通知
             </p>
           </div>
           <Switch
@@ -118,7 +118,7 @@ function NotificationSettings() {
 
         <div className="flex items-center justify-between rounded-lg border border-void-300 p-4">
           <div className="space-y-0.5">
-            <Label className="text-base">Push Notifications</Label>
+            <Label className="text-base">推送通知</Label>
             <p className="text-sm text-muted-foreground">
               Receive push notifications in your browser
             </p>
@@ -157,7 +157,7 @@ function NotificationSettings() {
           </div>
 
           <div className="flex items-center justify-between">
-            <Label className="text-sm">Price Alerts</Label>
+            <Label className="text-sm">价格提醒</Label>
             <Switch
               checked={settings.priceAlerts}
               onCheckedChange={(checked) =>
@@ -177,16 +177,16 @@ function SecuritySettings() {
 
   return (
     <SettingsSection
-      title="Security"
+      title="安全"
       description="Manage your security settings"
     >
       <div className="space-y-4">
         {/* Password Change */}
         <div className="rounded-lg border border-void-300 p-4">
-          <h4 className="text-sm font-medium mb-4">Change Password</h4>
+          <h4 className="text-sm font-medium mb-4">修改密码</h4>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label htmlFor="current">Current Password</Label>
+              <Label htmlFor="current">当前密码</Label>
               <div className="relative">
                 <Input
                   id="current"
@@ -208,7 +208,7 @@ function SecuritySettings() {
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="new">New Password</Label>
+              <Label htmlFor="new">新密码</Label>
               <div className="relative">
                 <Input
                   id="new"
@@ -229,7 +229,7 @@ function SecuritySettings() {
               </div>
             </div>
 
-            <Button className="w-full">Update Password</Button>
+            <Button className="w-full">更新密码</Button>
           </div>
         </div>
 
@@ -252,7 +252,7 @@ function SecuritySettings() {
         <div className="rounded-lg border border-void-300 p-4">
           <div className="flex items-center justify-between">
             <div>
-              <h4 className="text-sm font-medium">API Keys</h4>
+              <h4 className="text-sm font-medium">API 密钥</h4>
               <p className="text-sm text-muted-foreground">
                 Manage API keys for programmatic access
               </p>
@@ -273,7 +273,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+        <h1 className="text-2xl font-bold tracking-tight">设置</h1>
         <p className="text-muted-foreground">
           Manage your account settings and preferences
         </p>
@@ -295,7 +295,7 @@ export default function SettingsPage() {
                 )}
               >
                 <Palette className="h-4 w-4" />
-                Appearance
+                外观
               </button>
               <button
                 onClick={() => setActiveTab('notifications')}
@@ -307,7 +307,7 @@ export default function SettingsPage() {
                 )}
               >
                 <Bell className="h-4 w-4" />
-                Notifications
+                通知
               </button>
               <button
                 onClick={() => setActiveTab('security')}
@@ -319,7 +319,7 @@ export default function SettingsPage() {
                 )}
               >
                 <Shield className="h-4 w-4" />
-                Security
+                安全
               </button>
             </nav>
           </CardContent>

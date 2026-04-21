@@ -136,6 +136,7 @@ export interface Wallet {
   name: string;
   address?: string;
   proxy_url?: string;
+  proxy_wallet_address?: string;
   is_active: boolean;
   is_default: boolean;
   status: 'active' | 'inactive' | 'error';
@@ -151,6 +152,7 @@ export interface CreateWalletRequest {
   name: string;
   private_key: string;
   proxy_url?: string;
+  proxy_wallet_address?: string;
   is_default?: boolean;
 }
 
@@ -158,6 +160,7 @@ export interface UpdateWalletRequest {
   name?: string;
   private_key?: string;
   proxy_url?: string;
+  proxy_wallet_address?: string;
   is_active?: boolean;
   is_default?: boolean;
 }

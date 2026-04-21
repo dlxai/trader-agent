@@ -30,6 +30,7 @@ class Wallet(Base, TimestampMixin):
 
     # Proxy configuration
     proxy_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    proxy_wallet_address: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Status
     is_active: Mapped[bool] = mapped_column(default=True)

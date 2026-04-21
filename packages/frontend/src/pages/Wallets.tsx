@@ -55,7 +55,7 @@ function WalletCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-void-200">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
               <WalletIcon className="h-5 w-5 text-emerald-500" />
             </div>
             <div>
@@ -148,6 +148,7 @@ function CreateWalletDialog({
   const [name, setName] = useState('')
   const [privateKey, setPrivateKey] = useState('')
   const [proxyUrl, setProxyUrl] = useState('http://127.0.0.1:7890')
+  const [proxyWalletAddress, setProxyWalletAddress] = useState('')
   const [showPrivateKey, setShowPrivateKey] = useState(false)
   const [isDefault, setIsDefault] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -163,6 +164,7 @@ function CreateWalletDialog({
       setName('')
       setPrivateKey('')
       setProxyUrl('http://127.0.0.1:7890')
+      setProxyWalletAddress('')
       onOpenChange(false)
     },
     onError: (error: Error) => {
@@ -177,6 +179,7 @@ function CreateWalletDialog({
       name,
       private_key: privateKey,
       proxy_url: proxyUrl || undefined,
+      proxy_wallet_address: proxyWalletAddress || undefined,
       is_default: isDefault,
     })
     setIsSubmitting(false)
@@ -236,13 +239,22 @@ function CreateWalletDialog({
                 onChange={(e) => setProxyUrl(e.target.value)}
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="proxyWalletAddress">Proxy Wallet Address (Optional)</Label>
+              <Input
+                id="proxyWalletAddress"
+                placeholder="0x..."
+                value={proxyWalletAddress}
+                onChange={(e) => setProxyWalletAddress(e.target.value)}
+              />
+            </div>
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
                 id="isDefault"
                 checked={isDefault}
                 onChange={(e) => setIsDefault(e.target.checked)}
-                className="rounded border-void-300"
+                className="rounded border-border"
               />
               <Label htmlFor="isDefault" className="text-sm font-normal">
                 Set as default wallet
@@ -337,7 +349,7 @@ export default function WalletsPage() {
       ) : (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
               <WalletIcon className="h-6 w-6 text-muted-foreground" />
             </div>
             <h3 className="mt-4 text-lg font-semibold">No wallets configured</h3>

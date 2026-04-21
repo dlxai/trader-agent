@@ -1,6 +1,7 @@
 """Strategy runner service for scheduled execution."""
 
 import asyncio
+import sys
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -8,6 +9,9 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+sys.path.insert(0, "/d/wework/polymarket-agent")
+from polymarket_sdk.sdk import PolymarketSDK
 
 from src.database import AsyncSessionLocal
 from src.models.strategy import Strategy
@@ -25,11 +29,19 @@ class StrategyRunner:
     def __init__(self):
         self._running = False
         self._tasks: dict[UUID, asyncio.Task] = {}
+        self.sdk: Optional[PolymarketSDK] = None
 
     async def start_strategy(self, strategy_id: UUID) -> None:
         """Start running a strategy."""
         if strategy_id in self._tasks:
             return  # Already running
+
+        # 初始化 SDK
+        try:
+            self.sdk = await PolymarketSDK.create()
+        except Exception as e:
+            print(f"Failed to initialize Polymarket SDK: {e}")
+            raise
 
         task = asyncio.create_task(self._run_strategy_loop(strategy_id))
         self._tasks[strategy_id] = task
@@ -39,6 +51,13 @@ class StrategyRunner:
         if strategy_id in self._tasks:
             self._tasks[strategy_id].cancel()
             del self._tasks[strategy_id]
+
+        if self.sdk:
+            try:
+                await self.sdk.close()
+            except Exception as e:
+                print(f"Failed to close Polymarket SDK: {e}")
+            self.sdk = None
 
     async def _run_strategy_loop(self, strategy_id: UUID) -> None:
         """Main strategy execution loop."""
@@ -121,11 +140,15 @@ class StrategyRunner:
         return signal_log
 
     async def _get_available_markets(self, strategy: Strategy) -> list[dict]:
-        """Get available markets based on filter."""
-        # TODO: 实现 Polymarket 市场查询
-        # 根据 strategy.market_filter_days 过滤
-        # 返回示例: [{"id": "xxx", "name": "Trump 2024", "end_date": "..."}]
-        return []
+        """使用 SDK v2 获取可用市场"""
+        # 计算截止时间
+        hours = strategy.market_filter_days * 24 if strategy.market_filter_days else 24
+
+        # 获取即将到期的市场
+        markets = await self.sdk.gamma_api.get_markets_ending_within_hours(hours)
+
+        # 过滤活跃市场
+        return [m for m in markets if m.get("active") and m.get("volume", 0) > 1000]
 
     async def _call_ai_analysis(
         self, strategy: Strategy, markets: list[dict]

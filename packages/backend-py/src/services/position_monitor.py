@@ -1,11 +1,16 @@
 """Position monitor for stop-loss and take-profit."""
 
 import asyncio
+import sys
 from decimal import Decimal
 from uuid import UUID
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+sys.path.insert(0, "/d/wework/polymarket-agent")
+from polymarket_sdk.sdk import PolymarketSDK
 
 from src.database import AsyncSessionLocal
 from src.models.position import Position
@@ -18,15 +23,31 @@ class PositionMonitor:
     def __init__(self):
         self._running = False
         self._check_interval = 60  # Check every 60 seconds
+        self.sdk: Optional[PolymarketSDK] = None
 
     async def start(self) -> None:
         """Start the position monitor."""
         self._running = True
+
+        # 初始化 SDK
+        try:
+            self.sdk = await PolymarketSDK.create()
+        except Exception as e:
+            print(f"Failed to initialize Polymarket SDK: {e}")
+            raise
+
         asyncio.create_task(self._monitor_loop())
 
     async def stop(self) -> None:
         """Stop the position monitor."""
         self._running = False
+
+        if self.sdk:
+            try:
+                await self.sdk.close()
+            except Exception as e:
+                print(f"Failed to close Polymarket SDK: {e}")
+            self.sdk = None
 
     async def _monitor_loop(self) -> None:
         """Main monitoring loop."""
@@ -54,8 +75,16 @@ class PositionMonitor:
     ) -> None:
         """Check a single position."""
 
-        # 获取当前价格（TODO: 从 Polymarket API 获取）
+        # 使用 SDK 获取实时价格
         current_price = position.current_price
+
+        if self.sdk and position.condition_id:
+            try:
+                ticker = await self.sdk.clob_api.get_ticker(position.condition_id)
+                current_price = Decimal(str(ticker.get("price", 0)))
+                position.current_price = current_price
+            except Exception as e:
+                print(f"Failed to get price: {e}")
 
         if not current_price:
             return

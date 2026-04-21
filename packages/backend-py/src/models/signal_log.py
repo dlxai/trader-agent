@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Numeric, ForeignKey, DateTime, Text, JSON
+from sqlalchemy import String, Numeric, ForeignKey, DateTime, Text, JSON, Integer
 
 from src.database import Base
 from .base import TimestampMixin, UUIDMixin
@@ -152,6 +152,19 @@ class SignalLog(Base, TimestampMixin):
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)  # JSON list
     signal_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
     source: Mapped[str] = mapped_column(String(50), default="system")
+
+    # AI 思维链 (新增)
+    ai_thinking: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ai_model: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    ai_tokens_used: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ai_duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # 输入数据摘要 (新增)
+    input_summary: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # 交易决策详情 (新增)
+    decision_details: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
     correlation_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
     user_agent: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)

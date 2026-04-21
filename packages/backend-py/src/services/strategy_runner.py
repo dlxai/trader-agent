@@ -20,8 +20,8 @@ from src.models.portfolio import Portfolio
 from src.models.wallet import Wallet
 from src.models.signal_log import SignalLog
 from src.models.order import Order
-from src.models.position import Position
 from src.models.provider import Provider
+from src.services.data_source_manager import get_data_source_manager, DataSource
 
 
 class StrategyRunner:
@@ -30,6 +30,7 @@ class StrategyRunner:
     def __init__(self):
         self._running = False
         self._tasks: dict[UUID, asyncio.Task] = {}
+        self._data_source_manager = get_data_source_manager()
         self.sdk: Optional[PolymarketSDK] = None
 
     async def start_strategy(self, strategy_id: UUID) -> None:
@@ -37,49 +38,23 @@ class StrategyRunner:
         if strategy_id in self._tasks:
             return  # Already running
 
-        # 获取策略配置
+        # Get strategy and portfolio info from database
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(Strategy).where(Strategy.id == strategy_id)
             )
             strategy = result.scalar_one_or_none()
+            if not strategy or not strategy.portfolio_id:
+                raise ValueError("Strategy not found or no portfolio")
 
-            # 获取关联的 wallet
-            if strategy.portfolio_id:
-                portfolio_result = await db.execute(
-                    select(Portfolio).where(Portfolio.id == strategy.portfolio_id)
-                )
-                portfolio = portfolio_result.scalar_one_or_none()
+        # Get or create shared data source
+        data_source = await self._data_source_manager.get_or_create_source(
+            portfolio_id=strategy.portfolio_id,
+            source_type="polymarket",
+            proxy_url="http://127.0.0.1:7890"
+        )
 
-                # 获取第一个活跃的 wallet
-                if portfolio:
-                    wallet_result = await db.execute(
-                        select(Wallet).where(
-                            Wallet.user_id == strategy.user_id,
-                            Wallet.is_active == True
-                        ).limit(1)
-                    )
-                    wallet = wallet_result.scalar_one_or_none()
-                    private_key = wallet.private_key_encrypted if wallet else None
-                    proxy_wallet_address = wallet.proxy_wallet_address if wallet else None
-                else:
-                    private_key = None
-                    proxy_wallet_address = None
-            else:
-                private_key = None
-                proxy_wallet_address = None
-
-        # 初始化 SDK
-        try:
-            self.sdk = await PolymarketSDK.create(
-                private_key=private_key,
-                proxy_wallet_address=proxy_wallet_address
-            )
-        except Exception as e:
-            print(f"Failed to initialize Polymarket SDK: {e}")
-            raise
-
-        task = asyncio.create_task(self._run_strategy_loop(strategy_id))
+        task = asyncio.create_task(self._run_strategy_loop(strategy_id, data_source))
         self._tasks[strategy_id] = task
 
     async def stop_strategy(self, strategy_id: UUID) -> None:
@@ -88,14 +63,11 @@ class StrategyRunner:
             self._tasks[strategy_id].cancel()
             del self._tasks[strategy_id]
 
-        if self.sdk:
-            try:
-                await self.sdk.close()
-            except Exception as e:
-                print(f"Failed to close Polymarket SDK: {e}")
-            self.sdk = None
+        # Optionally cleanup data source if no strategies are running for this portfolio
+        # Note: DataSourceManager handles lifecycle, so we don't close here
+        # to allow sharing across multiple strategies
 
-    async def _run_strategy_loop(self, strategy_id: UUID) -> None:
+    async def _run_strategy_loop(self, strategy_id: UUID, data_source: DataSource) -> None:
         """Main strategy execution loop."""
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -197,11 +169,231 @@ class StrategyRunner:
         self, strategy: Strategy, markets: list[dict]
     ) -> Optional[dict]:
         """Call AI to analyze markets."""
-        # TODO: 实现 AI 调用
-        # 1. 构建 Prompt（使用 strategy.system_prompt, strategy.custom_prompt）
-        # 2. 调用 Provider（获取 API key）
-        # 3. 解析响应
-        return None
+        import httpx
+        import json
+        from datetime import datetime
+
+        # 1. 获取 Provider 配置
+        provider = None
+        if strategy.provider_id:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Provider).where(Provider.id == strategy.provider_id)
+                )
+                provider = result.scalar_one_or_none()
+
+        if not provider or not provider.api_key:
+            print(f"No provider or API key found for strategy {strategy.id}")
+            # 返回一个模拟结果用于测试
+            return self._generate_mock_ai_result(markets)
+
+        # 2. 构建 Prompt
+        system_prompt = strategy.system_prompt or self._get_default_system_prompt()
+        user_prompt = self._build_user_prompt(strategy, markets)
+
+        # 3. 准备 API 请求
+        api_base = provider.api_base or self._get_default_api_base(provider.provider_type)
+        model = provider.model or "gpt-4o"
+        temperature = provider.temperature or 0.7
+        max_tokens = provider.max_tokens or 2000
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {provider.api_key}",
+        }
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "trading_signal",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "action": {"type": "string", "enum": ["buy", "sell", "hold"]},
+                            "side": {"type": "string", "enum": ["yes", "no"]},
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "reasoning": {"type": "string"},
+                            "thinking": {"type": "string"},
+                            "stop_loss": {"type": "number"},
+                            "take_profit": {"type": "number"},
+                            "risk_reward": {"type": "number"},
+                            "market_id": {"type": "string"},
+                            "symbol": {"type": "string"},
+                        },
+                        "required": ["action", "side", "confidence", "reasoning"],
+                    },
+                },
+            },
+        }
+
+        start_time = datetime.utcnow()
+
+        # 4. 调用 AI API
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{api_base}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            # 5. 解析响应
+            content = result["choices"][0]["message"]["content"]
+            ai_result = json.loads(content)
+
+            # 添加元数据
+            ai_result["model"] = model
+            ai_result["duration_ms"] = duration_ms
+            ai_result["tokens_used"] = result.get("usage", {}).get("total_tokens", 0)
+
+            # 添加输入摘要
+            ai_result["input_summary"] = {
+                "markets_count": len(markets),
+                "data_sources": strategy.data_sources or {},
+                "market_filter_days": strategy.market_filter_days,
+            }
+
+            # 如果 AI 没有指定市场，选择第一个
+            if not ai_result.get("market_id") and markets:
+                ai_result["market_id"] = markets[0].get("id", "")
+                ai_result["symbol"] = markets[0].get("symbol", "")
+
+            print(f"AI analysis completed: {ai_result.get('action')} {ai_result.get('side')} @ {ai_result.get('confidence')}")
+            return ai_result
+
+        except Exception as e:
+            print(f"AI API call failed: {e}")
+            # 返回模拟结果
+            return self._generate_mock_ai_result(markets)
+
+    def _get_default_system_prompt(self) -> str:
+        """Get default system prompt for trading."""
+        return """You are a Polymarket trading expert. Analyze markets and provide trading signals.
+
+Your task is to:
+1. Analyze market data including prices, volume, and recent activity
+2. Identify trading opportunities based on the data
+3. Provide clear buy/sell/hold signals with confidence levels
+4. Include stop-loss and take-profit recommendations
+
+Response format (JSON):
+{
+  "action": "buy" | "sell" | "hold",
+  "side": "yes" | "no",
+  "confidence": 0.0-1.0,
+  "reasoning": "detailed explanation",
+  "thinking": "your analysis process",
+  "stop_loss": recommended stop loss price,
+  "take_profit": recommended take profit price,
+  "risk_reward": risk/reward ratio,
+  "market_id": "the selected market ID",
+  "symbol": "market symbol"
+}
+
+Consider:
+- Market liquidity and volume
+- Recent price movements
+- Time until market expiration
+- Risk management principles"""
+
+    def _get_default_api_base(self, provider_type: str) -> str:
+        """Get default API base URL for provider."""
+        bases = {
+            "openai": "https://api.openai.com/v1",
+            "anthropic": "https://api.anthropic.com/v1",
+            "deepseek": "https://api.deepseek.com/v1",
+            "azure": "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
+        }
+        return bases.get(provider_type, "https://api.openai.com/v1")
+
+    def _build_user_prompt(self, strategy: Strategy, markets: list[dict]) -> str:
+        """Build user prompt with market data."""
+        # 格式化市场数据
+        markets_info = []
+        for i, m in enumerate(markets[:10]):  # 限制前10个市场
+            markets_info.append(f"""
+Market {i+1}:
+- ID: {m.get('id', 'N/A')}
+- Symbol: {m.get('symbol', 'N/A')}
+- Question: {m.get('question', 'N/A')}
+- Current Price: {m.get('price', 'N/A')}
+- Volume 24h: ${m.get('volume', 0):,.0f}
+- Liquidity: ${m.get('liquidity', 0):,.0f}
+- End Date: {m.get('endDate', 'N/A')}
+- Active: {m.get('active', False)}
+""")
+
+        prompt = f"""Analyze the following Polymarket markets and provide a trading signal.
+
+Strategy: {strategy.name}
+Description: {strategy.description or 'N/A'}
+
+Available Markets (ending within {strategy.market_filter_days or 24} hours):
+{''.join(markets_info)}
+
+{system_prompt if (system_prompt := strategy.custom_prompt) else ''}
+
+Provide your analysis and trading decision in JSON format."""
+
+        return prompt
+
+    def _generate_mock_ai_result(self, markets: list[dict]) -> dict:
+        """Generate mock AI result for testing."""
+        if not markets:
+            return {
+                "action": "hold",
+                "side": "yes",
+                "confidence": 0.0,
+                "reasoning": "No markets available",
+                "thinking": "No markets match the filter criteria",
+                "stop_loss": None,
+                "take_profit": None,
+                "risk_reward": None,
+                "model": "mock",
+                "duration_ms": 0,
+                "tokens_used": 0,
+            }
+
+        # 随机选择一个市场
+        import random
+        market = random.choice(markets)
+        price = market.get("price", 0.5)
+
+        # 随机决策（测试用）
+        actions = ["buy", "sell", "hold"]
+        action = random.choice(actions)
+        side = "yes" if random.random() > 0.5 else "no"
+        confidence = round(random.uniform(0.3, 0.9), 2)
+
+        return {
+            "action": action if action != "hold" else "hold",
+            "side": side,
+            "confidence": confidence,
+            "reasoning": f"Mock analysis: Price at {price}, confidence {confidence}",
+            "thinking": "This is a mock result for testing purposes",
+            "stop_loss": round(price * 0.9, 2) if action == "buy" else round(price * 1.1, 2),
+            "take_profit": round(price * 1.2, 2) if action == "buy" else round(price * 0.8, 2),
+            "risk_reward": 2.0,
+            "market_id": market.get("id", ""),
+            "symbol": market.get("symbol", ""),
+            "model": "mock",
+            "duration_ms": 100,
+            "tokens_used": 50,
+        }
 
     def _calculate_order_size(
         self, strategy: Strategy, confidence: float

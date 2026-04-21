@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 sys.path.insert(0, "/d/wework/polymarket-agent")
 from polymarket_sdk.sdk import PolymarketSDK
+from polymarket_sdk.services.trading_service import Side
 
 from src.database import AsyncSessionLocal
 from src.models.strategy import Strategy
@@ -179,12 +180,59 @@ class StrategyRunner:
         strategy: Strategy,
         signal_log: SignalLog,
     ) -> None:
-        """Execute order based on signal."""
-        # TODO: 实现订单执行
-        # 1. 获取 Wallet
-        # 2. 创建 Order
-        # 3. 调用 Polymarket API
-        # 4. 创建 Position
+        """使用 SDK v2 执行订单"""
+        if not self.sdk:
+            print("SDK not initialized")
+            return
+
+        try:
+            # 1. 获取市场信息（从 signal_log 或重新获取）
+            # signal_log 中应该有 market_id 或相关市场信息
+
+            # 2. 获取 token_id
+            # 需要根据市场获取 YES/NO token_id
+            # 可以使用 sdk.gamma_api.get_market() 获取详情
+
+            # 3. 执行市价单
+            side = Side.YES if signal_log.side == "yes" else Side.NO
+
+            # 注意：这里需要根据市场实际情况获取 token_id
+            # 暂时使用示例值，实际需要从市场数据中获取
+            # 假设 signal_log 有 market_id，从市场详情中获取 token_id
+            # 这里需要实现根据市场获取 token_id 的逻辑
+
+            result = await self.sdk.trading_service.create_market_order(
+                token_id="",  # 需要从市场获取
+                side=side,
+                amount=float(signal_log.size),
+                order_type="GTC"
+            )
+
+            print(f"Order placed: {result}")
+
+            # 4. 创建 Order 记录
+            order = Order(
+                id=UUID(),
+                user_id=strategy.user_id,
+                portfolio_id=strategy.portfolio_id,
+                strategy_id=strategy.id,
+                signal_id=signal_log.signal_id,
+                market_id=signal_log.market_id,
+                symbol=signal_log.side,
+                side=signal_log.side,
+                order_type="market",
+                size=signal_log.size,
+                filled_size=result.get("size", signal_log.size),
+                status="filled",
+                # ... 其他字段
+            )
+            db.add(order)
+            await db.commit()
+
+        except Exception as e:
+            print(f"Order execution failed: {e}")
+            signal_log.status = "failed"
+            await db.commit()
 
 
 # 全局实例

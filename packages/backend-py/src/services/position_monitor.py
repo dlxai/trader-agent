@@ -15,6 +15,7 @@ from polymarket_sdk.sdk import PolymarketSDK
 from src.database import AsyncSessionLocal
 from src.models.position import Position
 from src.models.order import Order
+from src.models.wallet import Wallet
 
 
 class PositionMonitor:
@@ -29,11 +30,24 @@ class PositionMonitor:
         """Start the position monitor."""
         self._running = True
 
+        # 获取活跃的 wallet 以获取 proxy_wallet_address
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Wallet).where(Wallet.is_active == True).limit(1)
+            )
+            wallet = result.scalar_one_or_none()
+
+            private_key = wallet.private_key_encrypted if wallet else None
+            proxy_wallet_address = wallet.proxy_wallet_address if wallet else None
+
         # 初始化 SDK
         try:
-            self.sdk = await PolymarketSDK.create()
+            self.sdk = await PolymarketSDK.create(
+                private_key=private_key,
+                proxy_wallet_address=proxy_wallet_address
+            )
         except Exception as e:
-            print(f"Failed to initialize Polymarket SDK: {e}")
+            print(f"Failed to initialize SDK: {e}")
             raise
 
         asyncio.create_task(self._monitor_loop())

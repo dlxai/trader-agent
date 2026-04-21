@@ -4,9 +4,9 @@ import {
   Briefcase,
   TrendingUp,
   ListOrdered,
-  Plug,
   Settings,
   Wallet,
+  Brain,
   ChevronRight,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -46,9 +46,9 @@ const navItems: NavItem[] = [
     href: '/orders',
   },
   {
-    label: '数据源',
-    icon: Plug,
-    href: '/providers',
+    label: '策略',
+    icon: Brain,
+    href: '/strategies',
   },
   {
     label: '钱包',
@@ -76,9 +76,9 @@ export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
   }
 
   return (
-    <div className="flex h-full flex-col border-r border-void-300 bg-void-50">
+    <div className="flex h-full flex-col border-r border-border bg-muted/50">
       {/* Logo */}
-      <div className="flex h-16 items-center border-b border-void-300 px-4">
+      <div className="flex h-16 items-center border-b border-border px-4">
         <NavLink
           to="/dashboard"
           className="flex items-center gap-3"
@@ -108,7 +108,7 @@ export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
                 'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                 active
                   ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'text-muted-foreground hover:bg-void-200 hover:text-foreground'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
               <item.icon className={cn(
@@ -129,7 +129,7 @@ export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
       </nav>
 
       {/* Bottom Navigation */}
-      <div className="border-t border-void-300 p-3">
+      <div className="border-t border-border p-3">
         {bottomNavItems.map((item) => {
           const active = isActive(item.href)
           return (
@@ -141,7 +141,7 @@ export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
                 'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                 active
                   ? 'bg-emerald-500/10 text-emerald-500'
-                  : 'text-muted-foreground hover:bg-void-200 hover:text-foreground'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               )}
             >
               <item.icon className="h-4 w-4 shrink-0" />
@@ -152,7 +152,7 @@ export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
 
         {/* User Info */}
         {!isCollapsed && user && (
-          <div className="mt-4 flex items-center gap-3 rounded-md border border-void-300 bg-void-100 p-3">
+          <div className="mt-4 flex items-center gap-3 rounded-md border border-border bg-muted/50 p-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
               <span className="text-xs font-medium">
                 {(user.name || 'U').slice(0, 2).toUpperCase()}

@@ -8,6 +8,7 @@ import { LoadingScreen } from '@/components/ui/LoadingScreen'
 const LoginPage = lazy(() => import('@/pages/Login'))
 const DashboardPage = lazy(() => import('@/pages/Dashboard'))
 const PortfoliosPage = lazy(() => import('@/pages/Portfolios'))
+const StrategiesPage = lazy(() => import('@/pages/Strategies'))
 const PositionsPage = lazy(() => import('@/pages/Positions'))
 const OrdersPage = lazy(() => import('@/pages/Orders'))
 const ProvidersPage = lazy(() => import('@/pages/Providers'))
@@ -75,6 +76,10 @@ const routes: RouteObject[] = [
       {
         path: 'wallets',
         element: withSuspense(WalletsPage),
+      },
+      {
+        path: 'strategies',
+        element: withSuspense(StrategiesPage),
       },
       {
         path: 'settings',

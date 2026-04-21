@@ -37,9 +37,44 @@ class StrategyRunner:
         if strategy_id in self._tasks:
             return  # Already running
 
+        # 获取策略配置
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Strategy).where(Strategy.id == strategy_id)
+            )
+            strategy = result.scalar_one_or_none()
+
+            # 获取关联的 wallet
+            if strategy.portfolio_id:
+                portfolio_result = await db.execute(
+                    select(Portfolio).where(Portfolio.id == strategy.portfolio_id)
+                )
+                portfolio = portfolio_result.scalar_one_or_none()
+
+                # 获取第一个活跃的 wallet
+                if portfolio:
+                    wallet_result = await db.execute(
+                        select(Wallet).where(
+                            Wallet.user_id == strategy.user_id,
+                            Wallet.is_active == True
+                        ).limit(1)
+                    )
+                    wallet = wallet_result.scalar_one_or_none()
+                    private_key = wallet.private_key_encrypted if wallet else None
+                    proxy_wallet_address = wallet.proxy_wallet_address if wallet else None
+                else:
+                    private_key = None
+                    proxy_wallet_address = None
+            else:
+                private_key = None
+                proxy_wallet_address = None
+
         # 初始化 SDK
         try:
-            self.sdk = await PolymarketSDK.create()
+            self.sdk = await PolymarketSDK.create(
+                private_key=private_key,
+                proxy_wallet_address=proxy_wallet_address
+            )
         except Exception as e:
             print(f"Failed to initialize Polymarket SDK: {e}")
             raise

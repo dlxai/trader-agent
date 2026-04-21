@@ -147,7 +147,6 @@ function CreateWalletDialog({
 }) {
   const [name, setName] = useState('')
   const [privateKey, setPrivateKey] = useState('')
-  const [proxyUrl, setProxyUrl] = useState('http://127.0.0.1:7890')
   const [proxyWalletAddress, setProxyWalletAddress] = useState('')
   const [showPrivateKey, setShowPrivateKey] = useState(false)
   const [isDefault, setIsDefault] = useState(false)
@@ -163,7 +162,6 @@ function CreateWalletDialog({
       toast({ title: 'Wallet created successfully' })
       setName('')
       setPrivateKey('')
-      setProxyUrl('http://127.0.0.1:7890')
       setProxyWalletAddress('')
       onOpenChange(false)
     },
@@ -178,7 +176,6 @@ function CreateWalletDialog({
     createMutation.mutate({
       name,
       private_key: privateKey,
-      proxy_url: proxyUrl || undefined,
       proxy_wallet_address: proxyWalletAddress || undefined,
       is_default: isDefault,
     })
@@ -229,15 +226,6 @@ function CreateWalletDialog({
               <p className="text-xs text-muted-foreground">
                 Your private key is encrypted and stored securely
               </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="proxyUrl">Proxy URL (Optional)</Label>
-              <Input
-                id="proxyUrl"
-                placeholder="http://127.0.0.1:7890"
-                value={proxyUrl}
-                onChange={(e) => setProxyUrl(e.target.value)}
-              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="proxyWalletAddress">Proxy Wallet Address (Optional)</Label>

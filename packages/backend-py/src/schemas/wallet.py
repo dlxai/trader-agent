@@ -13,7 +13,6 @@ class WalletBase(BaseSchema):
     """Base wallet schema."""
 
     name: str = Field(..., min_length=1, max_length=100)
-    proxy_url: Optional[str] = Field(None, description="Proxy URL (e.g., http://127.0.0.1:7890)")
     proxy_wallet_address: Optional[str] = Field(None, description="Proxy wallet address (Polymarket proxy wallet address)")
 
 
@@ -29,7 +28,6 @@ class WalletUpdate(BaseSchema):
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     private_key: Optional[str] = Field(None, description="New private key to replace existing")
-    proxy_url: Optional[str] = None
     proxy_wallet_address: Optional[str] = None
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None

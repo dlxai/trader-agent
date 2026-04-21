@@ -29,7 +29,6 @@ class Wallet(Base, TimestampMixin):
     private_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Proxy configuration
-    proxy_url: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     proxy_wallet_address: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 
     # Status

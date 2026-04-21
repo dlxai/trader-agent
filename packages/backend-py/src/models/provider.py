@@ -58,6 +58,7 @@ class Provider(Base, TimestampMixin):
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="providers")
+    strategies: Mapped[List["Strategy"]] = relationship(back_populates="provider")
 
     def __repr__(self) -> str:
         return f"<Provider(id={self.id}, name={self.name}, type={self.provider_type})>"

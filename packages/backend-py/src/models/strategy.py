@@ -1,11 +1,12 @@
 """Strategy model."""
 
 from decimal import Decimal
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Numeric, ForeignKey, Integer, Boolean, JSON
+from sqlalchemy import String, Numeric, ForeignKey, Integer, Boolean, JSON, Text, DateTime
 
 from src.database import Base
 from .base import TimestampMixin, UUIDMixin
@@ -92,6 +93,42 @@ class Strategy(Base, TimestampMixin):
         nullable=True,
     )
 
+    # AI 配置 (新增)
+    provider_id: Mapped[Optional[UUID]] = mapped_column(
+        ForeignKey("providers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Prompt 配置 (新增)
+    system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    custom_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # 数据源配置 (新增, JSON)
+    data_sources: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # 下单金额配置 (新增)
+    min_order_size: Mapped[Decimal] = mapped_column(
+        Numeric(19, 8),
+        default=Decimal("5"),
+    )
+    max_order_size: Mapped[Decimal] = mapped_column(
+        Numeric(19, 8),
+        default=Decimal("50"),
+    )
+
+    # 市场过滤配置 (新增)
+    market_filter_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    market_filter_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # "24h", "7d", "custom"
+
+    # 执行间隔配置 (新增)
+    run_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
+
+    # 运行统计 (新增)
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_runs: Mapped[int] = mapped_column(Integer, default=0)
+
     # Time settings
     trading_schedule: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
@@ -123,6 +160,7 @@ class Strategy(Base, TimestampMixin):
     positions: Mapped[List["Position"]] = relationship(back_populates="strategy")
     orders: Mapped[List["Order"]] = relationship(back_populates="strategy")
     signals: Mapped[List["SignalLog"]] = relationship(back_populates="strategy")
+    provider: Mapped[Optional["Provider"]] = relationship(back_populates="strategies")
 
     def __repr__(self) -> str:
         return f"<Strategy(id={self.id}, name={self.name}, type={self.type}, status={self.status})>"

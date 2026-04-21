@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, Numeric, ForeignKey, Integer
 
 from .base import Base, TimestampMixin, UUIDMixin
+from .signal_log import SignalLog
 
 
 class Portfolio(Base, TimestampMixin):
@@ -77,6 +78,14 @@ class Portfolio(Base, TimestampMixin):
         cascade="all, delete-orphan",
     )
     orders: Mapped[List["Order"]] = relationship(
+        back_populates="portfolio",
+        cascade="all, delete-orphan",
+    )
+    signals: Mapped[List["SignalLog"]] = relationship(
+        back_populates="portfolio",
+        cascade="all, delete-orphan",
+    )
+    strategies: Mapped[List["Strategy"]] = relationship(
         back_populates="portfolio",
         cascade="all, delete-orphan",
     )

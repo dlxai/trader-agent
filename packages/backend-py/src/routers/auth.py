@@ -84,9 +84,34 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
+    # Create tokens for the new user
+    access_token = create_access_token(user.id)
+    refresh_token, refresh_token_id = create_refresh_token(user.id)
+
+    # Store refresh token in database
+    expires_at = datetime.utcnow() + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
+    refresh_token_record = RefreshToken(
+        id=refresh_token_id,
+        token=refresh_token,
+        user_id=user.id,
+        expires_at=expires_at,
+    )
+    db.add(refresh_token_record)
+    await db.commit()
+
+    # Calculate expiry
+    expires_in = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    expires_at = datetime.utcnow() + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+
     return ApiResponse(
         success=True,
-        data=UserResponse.model_validate(user),
+        data=TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=expires_in,
+            expires_at=expires_at,
+        ),
         message="User registered successfully",
     )
 

@@ -2,10 +2,15 @@
 export interface User {
   id: string;
   email: string;
-  name: string;
-  role: 'admin' | 'user';
-  createdAt: string;
-  updatedAt: string;
+  username: string;
+  name?: string;
+  role?: 'admin' | 'user';
+  is_active?: boolean;
+  is_verified?: boolean;
+  is_superuser?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  last_login?: string;
 }
 
 export interface LoginCredentials {

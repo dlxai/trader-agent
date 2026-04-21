@@ -120,22 +120,55 @@ apiClient.interceptors.response.use(
 // Auth API
 export const authApi = {
   async login(credentials: LoginCredentials): Promise<{ tokens: AuthTokens; user: User }> {
-    const response = await apiClient.post<ApiResponse<{ tokens: AuthTokens; user: User }>>(
-      '/auth/login',
-      credentials
-    )
-    const { tokens, user } = response.data.data
+    const response = await apiClient.post<ApiResponse<{
+      access_token: string;
+      refresh_token: string;
+      token_type: string;
+      expires_in: number;
+      expires_at: string;
+    }>>('/auth/login', credentials)
+
+    const { access_token, refresh_token, expires_at } = response.data.data
+
+    // Convert expires_at string to timestamp
+    const expiresAtTimestamp = new Date(expires_at).getTime()
+
+    // Convert to the format expected by the store
+    const tokens: AuthTokens = {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      expiresAt: expiresAtTimestamp,
+    }
     setTokens(tokens)
+
+    // Fetch user data after login
+    const user = await this.getCurrentUser()
+
     return { tokens, user }
   },
 
   async register(credentials: RegisterCredentials): Promise<{ tokens: AuthTokens; user: User }> {
-    const response = await apiClient.post<ApiResponse<{ tokens: AuthTokens; user: User }>>(
-      '/auth/register',
-      credentials
-    )
-    const { tokens, user } = response.data.data
+    const response = await apiClient.post<ApiResponse<{
+      access_token: string;
+      refresh_token: string;
+      token_type: string;
+      expires_in: number;
+      expires_at: string;
+    }>>('/auth/register', credentials)
+
+    const { access_token, refresh_token, expires_at } = response.data.data
+
+    const expiresAtTimestamp = new Date(expires_at).getTime()
+
+    const tokens: AuthTokens = {
+      accessToken: access_token,
+      refreshToken: refresh_token,
+      expiresAt: expiresAtTimestamp,
+    }
     setTokens(tokens)
+
+    const user = await this.getCurrentUser()
+
     return { tokens, user }
   },
 
@@ -159,15 +192,34 @@ export const authApi = {
   },
 
   async getCurrentUser(): Promise<User> {
-    const response = await apiClient.get<ApiResponse<User>>('/auth/me')
+    const response = await apiClient.get<ApiResponse<User>>('/users/me')
     return response.data.data
   },
 }
 
 // Portfolios API
+export interface PortfolioSummary {
+  id: string
+  name: string
+  trading_mode: string
+  is_active: boolean
+  current_balance: number
+  total_pnl: number
+  total_pnl_percent: number
+  total_trades: number
+  created_at: string
+}
+
+export interface PortfolioListResponse {
+  items: PortfolioSummary[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export const portfoliosApi = {
-  async getAll(): Promise<Portfolio[]> {
-    const response = await apiClient.get<ApiResponse<Portfolio[]>>('/portfolios')
+  async getAll(): Promise<PortfolioListResponse> {
+    const response = await apiClient.get<ApiResponse<PortfolioListResponse>>('/portfolios')
     return response.data.data
   },
 
@@ -211,9 +263,36 @@ export const portfoliosApi = {
 }
 
 // Positions API
+// Position response from backend (paginated)
+export interface PositionListResponse {
+  items: PositionSummary[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface PositionSummary {
+  id: string
+  market_id: string
+  symbol: string
+  side: string
+  status: string
+  size: number
+  entry_price: number
+  current_price: number
+  unrealized_pnl: number
+  pnl_percent: number
+  opened_at: string
+  leverage: number
+  portfolio?: {
+    id: string
+    name: string
+  }
+}
+
 export const positionsApi = {
-  async getAll(): Promise<PositionWithPortfolio[]> {
-    const response = await apiClient.get<ApiResponse<PositionWithPortfolio[]>>('/positions')
+  async getAll(): Promise<PositionListResponse> {
+    const response = await apiClient.get<ApiResponse<PositionListResponse>>('/positions')
     return response.data.data
   },
 
@@ -244,6 +323,29 @@ export const positionsApi = {
 }
 
 // Orders API
+export interface OrderSummary {
+  id: string
+  market_id: string
+  symbol: string
+  side: string
+  order_type: string
+  size: number
+  filled_size: number
+  status: string
+  created_at: string
+  avg_fill_price?: number
+}
+
+export interface OrderListResponse {
+  items: OrderSummary[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+  has_next: boolean
+  has_prev: boolean
+}
+
 export const ordersApi = {
   async getAll(params?: {
     portfolioId?: string
@@ -253,8 +355,8 @@ export const ordersApi = {
     to?: string
     limit?: number
     offset?: number
-  }): Promise<{ orders: Order[]; total: number }> {
-    const response = await apiClient.get<ApiResponse<{ orders: Order[]; total: number }>>('/orders', { params })
+  }): Promise<OrderListResponse> {
+    const response = await apiClient.get<ApiResponse<OrderListResponse>>('/orders', { params })
     return response.data.data
   },
 

@@ -5,41 +5,30 @@ import {
   DollarSign,
   BarChart3,
   Activity,
-  ArrowUpRight,
-  ArrowDownRight,
+  ListOrdered,
 } from 'lucide-react'
-import { Badge } from '@/components/ui/Badge'
-import { dashboardApi } from '@/lib/api'
+import { portfoliosApi, positionsApi, ordersApi } from '@/lib/api'
 import {
   formatCurrency,
-  formatPercentage,
   formatNumber,
   cn,
 } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
+import { LoadingScreen } from '@/components/ui/LoadingScreen'
 
 interface StatCardProps {
   title: string
   value: string | number
-  change?: number
-  changeLabel?: string
   icon: React.ElementType
-  prefix?: string
-  suffix?: string
   isLoading?: boolean
 }
 
 function StatCard({
   title,
   value,
-  change,
-  changeLabel,
   icon: Icon,
   isLoading,
 }: StatCardProps) {
-  const isPositive = change && change > 0
-  const isNegative = change && change < 0
-
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -52,31 +41,7 @@ function StatCard({
         {isLoading ? (
           <div className="h-8 w-24 animate-pulse rounded bg-void-200" />
         ) : (
-          <>
-            <div className="text-2xl font-bold font-mono">{value}</div>
-            {change !== undefined && (
-              <div className="mt-1 flex items-center gap-1 text-xs">
-                {isPositive ? (
-                  <ArrowUpRight className="h-3 w-3 text-emerald-500" />
-                ) : isNegative ? (
-                  <ArrowDownRight className="h-3 w-3 text-red-500" />
-                ) : null}
-                <span
-                  className={cn(
-                    'font-mono',
-                    isPositive && 'text-emerald-500',
-                    isNegative && 'text-red-500',
-                    !isPositive && !isNegative && 'text-muted-foreground'
-                  )}
-                >
-                  {formatPercentage(change)}
-                </span>
-                {changeLabel && (
-                  <span className="text-muted-foreground">{changeLabel}</span>
-                )}
-              </div>
-            )}
-          </>
+          <div className="text-2xl font-bold font-mono">{value}</div>
         )}
       </CardContent>
     </Card>
@@ -84,10 +49,17 @@ function StatCard({
 }
 
 function RecentActivity() {
-  const { data: activities, isLoading } = useQuery({
-    queryKey: ['dashboard', 'activity'],
-    queryFn: () => dashboardApi.getRecentActivity(),
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => ordersApi.getAll({ limit: 10 }),
   })
+
+  const { data: positionsResponse, isLoading: positionsLoading } = useQuery({
+    queryKey: ['positions'],
+    queryFn: () => positionsApi.getAll(),
+  })
+
+  const isLoading = ordersLoading || positionsLoading
 
   if (isLoading) {
     return (
@@ -105,9 +77,61 @@ function RecentActivity() {
     )
   }
 
+  const orders = ordersResponse?.items || []
+  const positions = positionsResponse?.items || []
+
+  // Combine and sort by date
+  const activities: Array<{
+    id: string
+    type: 'order' | 'position'
+    description: string
+    timestamp: string
+    side: string
+    status: string
+  }> = []
+
+  orders.forEach((order) => {
+    activities.push({
+      id: `order-${order.id}`,
+      type: 'order',
+      description: `${order.side.toUpperCase()} ${order.size} ${order.symbol}`,
+      timestamp: order.created_at,
+      side: order.side,
+      status: order.status,
+    })
+  })
+
+  positions.forEach((pos) => {
+    activities.push({
+      id: `position-${pos.id}`,
+      type: 'position',
+      description: `${pos.side.toUpperCase()} ${pos.size} ${pos.symbol}`,
+      timestamp: pos.opened_at,
+      side: pos.side,
+      status: pos.status,
+    })
+  })
+
+  // Sort by timestamp desc
+  activities.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+
+  if (activities.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
+          <ListOrdered className="h-6 w-6 text-muted-foreground" />
+        </div>
+        <h3 className="mt-4 text-lg font-semibold">No activity yet</h3>
+        <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+          Start trading on Polymarket to see your activity here
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-3">
-      {activities?.map((activity) => (
+      {activities.slice(0, 10).map((activity) => (
         <div
           key={activity.id}
           className="flex items-center gap-3 rounded-lg border border-void-300 bg-void-100 p-3"
@@ -115,16 +139,14 @@ function RecentActivity() {
           <div
             className={cn(
               'flex h-8 w-8 items-center justify-center rounded-full',
-              activity.type === 'trade' && 'bg-emerald-500/10 text-emerald-500',
-              activity.type === 'order' && 'bg-blue-500/10 text-blue-500',
-              activity.type === 'deposit' && 'bg-emerald-500/10 text-emerald-500',
-              activity.type === 'withdrawal' && 'bg-red-500/10 text-red-500'
+              activity.type === 'order' ? 'bg-blue-500/10 text-blue-500' : 'bg-emerald-500/10 text-emerald-500'
             )}
           >
-            {activity.type === 'trade' && <TrendingUp className="h-4 w-4" />}
-            {activity.type === 'order' && <BarChart3 className="h-4 w-4" />}
-            {activity.type === 'deposit' && <TrendingUp className="h-4 w-4" />}
-            {activity.type === 'withdrawal' && <TrendingDown className="h-4 w-4" />}
+            {activity.type === 'order' ? (
+              <BarChart3 className="h-4 w-4" />
+            ) : (
+              <TrendingUp className="h-4 w-4" />
+            )}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">{activity.description}</p>
@@ -132,15 +154,9 @@ function RecentActivity() {
               {new Date(activity.timestamp).toLocaleString()}
             </p>
           </div>
-          {activity.amount !== undefined && (
-            <div className={cn(
-              'text-sm font-mono',
-              activity.amount > 0 ? 'text-emerald-500' : 'text-red-500'
-            )}>
-              {activity.amount > 0 ? '+' : ''}
-              {formatCurrency(activity.amount)}
-            </div>
-          )}
+          <div className="text-xs text-muted-foreground capitalize">
+            {activity.status}
+          </div>
         </div>
       ))}
     </div>
@@ -148,10 +164,36 @@ function RecentActivity() {
 }
 
 export default function DashboardPage() {
-  const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ['dashboard', 'stats'],
-    queryFn: () => dashboardApi.getStats(),
+  const { data: portfoliosResponse, isLoading: portfoliosLoading } = useQuery({
+    queryKey: ['portfolios'],
+    queryFn: () => portfoliosApi.getAll(),
   })
+
+  const { data: positionsResponse, isLoading: positionsLoading } = useQuery({
+    queryKey: ['positions'],
+    queryFn: () => positionsApi.getAll(),
+  })
+
+  const { data: ordersResponse, isLoading: ordersLoading } = useQuery({
+    queryKey: ['orders'],
+    queryFn: () => ordersApi.getAll({ limit: 100 }),
+  })
+
+  const isLoading = portfoliosLoading || positionsLoading || ordersLoading
+
+  const portfolios = portfoliosResponse?.items || []
+  const positions = positionsResponse?.items || []
+  const orders = ordersResponse?.items || []
+
+  // Calculate real stats from API data
+  const totalValue = portfolios.reduce((sum, p) => sum + Number(p.current_balance), 0)
+  const totalPnl = portfolios.reduce((sum, p) => sum + Number(p.total_pnl), 0)
+  const activePositions = positions.filter(p => p.status === 'open').length
+  const pendingOrders = orders.filter(o => o.status === 'pending' || o.status === 'open').length
+
+  if (isLoading) {
+    return <LoadingScreen />
+  }
 
   return (
     <div className="space-y-6">
@@ -159,7 +201,7 @@ export default function DashboardPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-muted-foreground">
-          Welcome back! Here's an overview of your trading activity.
+          Welcome back! Here's your Polymarket trading overview.
         </p>
       </div>
 
@@ -167,30 +209,27 @@ export default function DashboardPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Portfolio Value"
-          value={stats ? formatCurrency(stats.totalValue) : '-'}
-          change={stats?.pnlPercentage}
-          changeLabel="vs last month"
+          value={formatCurrency(totalValue)}
           icon={DollarSign}
-          isLoading={statsLoading}
+          isLoading={portfoliosLoading}
         />
         <StatCard
           title="Total P&L"
-          value={stats ? formatCurrency(stats.totalPnl) : '-'}
-          change={stats?.pnlPercentage}
-          icon={TrendingUp}
-          isLoading={statsLoading}
+          value={formatCurrency(totalPnl)}
+          icon={totalPnl >= 0 ? TrendingUp : TrendingDown}
+          isLoading={portfoliosLoading}
         />
         <StatCard
           title="Active Positions"
-          value={stats ? formatNumber(stats.activePositions) : '-'}
+          value={formatNumber(activePositions)}
           icon={Activity}
-          isLoading={statsLoading}
+          isLoading={positionsLoading}
         />
         <StatCard
           title="Pending Orders"
-          value={stats ? formatNumber(stats.pendingOrders) : '-'}
+          value={formatNumber(pendingOrders)}
           icon={BarChart3}
-          isLoading={statsLoading}
+          isLoading={ordersLoading}
         />
       </div>
 
@@ -203,38 +242,35 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="h-[300px] flex items-center justify-center text-muted-foreground">
-              Chart placeholder - Portfolio value over time
+              {portfolios.length === 0
+                ? 'Create a portfolio to start trading on Polymarket'
+                : 'Chart coming soon'}
             </div>
           </CardContent>
         </Card>
 
-        {/* Asset Allocation */}
+        {/* Portfolios Summary */}
         <Card>
           <CardHeader>
-            <CardTitle>Asset Allocation</CardTitle>
+            <CardTitle>Portfolios</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[200px] flex items-center justify-center text-muted-foreground">
-              Pie chart placeholder
-            </div>
-            <div className="mt-4 space-y-2">
-              {['BTC', 'ETH', 'SOL', 'Others'].map((asset, i) => (
-                <div key={asset} className="flex items-center justify-between text-sm">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-3 w-3 rounded-full"
-                      style={{
-                        backgroundColor: ['#10b981', '#3b82f6', '#8b5cf6', '#6b7280'][i],
-                      }}
-                    />
-                    <span>{asset}</span>
+            {portfolios.length === 0 ? (
+              <div className="flex items-center justify-center h-[200px] text-muted-foreground text-sm text-center">
+                No portfolios yet
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {portfolios.map((portfolio) => (
+                  <div key={portfolio.id} className="flex items-center justify-between p-2 rounded border">
+                    <span className="font-medium">{portfolio.name}</span>
+                    <span className={cn('font-mono', Number(portfolio.total_pnl) >= 0 ? 'text-emerald-500' : 'text-red-500')}>
+                      {formatCurrency(Number(portfolio.total_pnl))}
+                    </span>
                   </div>
-                  <span className="font-mono text-muted-foreground">
-                    {25 - i * 5}%
-                  </span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -243,7 +279,6 @@ export default function DashboardPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Recent Activity</CardTitle>
-          <Badge variant="outline">Live</Badge>
         </CardHeader>
         <CardContent>
           <RecentActivity />

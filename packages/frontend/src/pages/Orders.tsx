@@ -23,7 +23,6 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { LoadingScreen } from '@/components/ui/LoadingScreen'
 import { ordersApi } from '@/lib/api'
-import type { Order } from '@/types'
 import {
   formatCurrency,
   formatNumber,
@@ -32,7 +31,7 @@ import {
   cn,
 } from '@/lib/utils'
 
-const statusConfig = {
+const statusConfig: Record<string, { label: string; variant: 'warning' | 'info' | 'success' | 'secondary' | 'error'; icon: React.ElementType }> = {
   pending: { label: 'Pending', variant: 'warning', icon: Clock },
   open: { label: 'Open', variant: 'info', icon: Clock },
   filled: { label: 'Filled', variant: 'success', icon: CheckCircle2 },
@@ -40,14 +39,14 @@ const statusConfig = {
   cancelled: { label: 'Cancelled', variant: 'secondary', icon: XCircle },
   rejected: { label: 'Rejected', variant: 'error', icon: XCircle },
   expired: { label: 'Expired', variant: 'secondary', icon: XCircle },
-} as const
+}
 
-const typeConfig = {
+const typeConfig: Record<string, { label: string; color: string }> = {
   market: { label: 'Market', color: 'text-emerald-500' },
   limit: { label: 'Limit', color: 'text-blue-500' },
   stop: { label: 'Stop', color: 'text-yellow-500' },
   stop_limit: { label: 'Stop Limit', color: 'text-orange-500' },
-} as const
+}
 
 export default function OrdersPage() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -55,17 +54,19 @@ export default function OrdersPage() {
   const [typeFilter, setTypeFilter] = useState<string>('all')
   const [sideFilter, setSideFilter] = useState<string>('all')
 
-  const { data: orders, isLoading, refetch } = useQuery({
+  const { data: ordersResponse, isLoading, refetch } = useQuery({
     queryKey: ['orders'],
     queryFn: () => ordersApi.getAll({ limit: 100 }),
   })
 
-  const filteredOrders = orders?.orders.filter((order) => {
+  const orders = ordersResponse?.items || []
+
+  const filteredOrders = orders.filter((order) => {
     const matchesSearch =
       order.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
       order.id.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesStatus = statusFilter === 'all' || order.status === statusFilter
-    const matchesType = typeFilter === 'all' || order.type === typeFilter
+    const matchesType = typeFilter === 'all' || order.order_type === typeFilter
     const matchesSide = sideFilter === 'all' || order.side === sideFilter
 
     return matchesSearch && matchesStatus && matchesType && matchesSide
@@ -174,8 +175,11 @@ export default function OrdersPage() {
               <TableBody>
                 {filteredOrders.map((order) => {
                   const status = statusConfig[order.status]
-                  const type = typeConfig[order.type]
+                  const type = typeConfig[order.order_type]
                   const StatusIcon = status.icon
+                  const fillPercent = Number(order.size) > 0
+                    ? (Number(order.filled_size) / Number(order.size)) * 100
+                    : 0
 
                   return (
                     <TableRow key={order.id}>
@@ -183,13 +187,13 @@ export default function OrdersPage() {
                         {order.id.slice(0, 8)}...
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {formatDate(order.createdAt, { includeTime: true })}
+                        {formatDate(order.created_at, { includeTime: true })}
                       </TableCell>
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
                           <span>{order.symbol}</span>
                           <Badge variant="outline" className="text-2xs">
-                            {order.exchange}
+                            {order.market_id}
                           </Badge>
                         </div>
                       </TableCell>
@@ -207,19 +211,17 @@ export default function OrdersPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {formatNumber(order.quantity, { maximumFractionDigits: 8 })}
+                        {formatNumber(Number(order.size), { maximumFractionDigits: 8 })}
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {order.price ? formatCurrency(order.price) : 'Market'}
+                        {order.avg_fill_price ? formatCurrency(Number(order.avg_fill_price)) : 'Market'}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="font-mono">
-                          {formatNumber(order.filledQuantity, { maximumFractionDigits: 8 })}
+                          {formatNumber(Number(order.filled_size), { maximumFractionDigits: 8 })}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          {order.quantity > 0
-                            ? formatPercentage((order.filledQuantity / order.quantity) * 100)
-                            : '0%'}
+                          {formatPercentage(fillPercent)}
                         </div>
                       </TableCell>
                       <TableCell>

@@ -9,15 +9,11 @@ import {
   Trash2,
   Edit,
   Briefcase,
-  X,
 } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/Card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
-
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 import { LoadingScreen } from '@/components/ui/LoadingScreen'
-import { portfoliosApi } from '@/lib/api'
-import type { Portfolio } from '@/types'
+import { portfoliosApi, type PortfolioSummary } from '@/lib/api'
 import {
   formatCurrency,
   formatPercentage,
@@ -37,8 +33,8 @@ import {
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
 
-function PortfolioCard({ portfolio, onDelete }: { portfolio: Portfolio; onDelete: (id: string) => void }) {
-  const pnlIsPositive = portfolio.unrealizedPnl >= 0
+function PortfolioCard({ portfolio, onDelete }: { portfolio: PortfolioSummary; onDelete: (id: string) => void }) {
+  const pnlIsPositive = Number(portfolio.total_pnl) >= 0
 
   return (
     <Card className="group transition-all hover:border-emerald-500/30 hover:shadow-lg hover:shadow-emerald-500/5">
@@ -46,11 +42,6 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: Portfolio; onDelete
         <div className="flex items-start justify-between">
           <div>
             <CardTitle className="text-lg">{portfolio.name}</CardTitle>
-            {portfolio.description && (
-              <CardDescription className="mt-1 line-clamp-1">
-                {portfolio.description}
-              </CardDescription>
-            )}
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -76,7 +67,7 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: Portfolio; onDelete
         <div className="flex items-baseline justify-between">
           <span className="text-sm text-muted-foreground">Total Value</span>
           <span className="text-2xl font-bold font-mono">
-            {formatCurrency(portfolio.totalValue)}
+            {formatCurrency(Number(portfolio.current_balance))}
           </span>
         </div>
 
@@ -86,7 +77,7 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: Portfolio; onDelete
             <div
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded',
-                getPnlBgColor(portfolio.unrealizedPnl)
+                getPnlBgColor(Number(portfolio.total_pnl))
               )}
             >
               {pnlIsPositive ? (
@@ -98,17 +89,17 @@ function PortfolioCard({ portfolio, onDelete }: { portfolio: Portfolio; onDelete
             <div>
               <p className="text-sm font-medium">Unrealized P&L</p>
               <p className="text-xs text-muted-foreground">
-                {formatPercentage(portfolio.pnlPercentage)}
+                {formatPercentage(Number(portfolio.total_pnl_percent))}
               </p>
             </div>
           </div>
           <span
             className={cn(
               'font-mono font-medium',
-              getPnlColor(portfolio.unrealizedPnl)
+              getPnlColor(Number(portfolio.total_pnl))
             )}
           >
-            {formatCurrency(portfolio.unrealizedPnl)}
+            {formatCurrency(Number(portfolio.total_pnl))}
           </span>
         </div>
 
@@ -133,10 +124,12 @@ export default function PortfoliosPage() {
   const [newPortfolio, setNewPortfolio] = useState({ name: '', description: '' })
   const queryClient = useQueryClient()
 
-  const { data: portfolios, isLoading } = useQuery({
+  const { data: portfoliosResponse, isLoading } = useQuery({
     queryKey: ['portfolios'],
     queryFn: () => portfoliosApi.getAll(),
   })
+
+  const portfolios = portfoliosResponse?.items || []
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; description?: string }) =>

@@ -47,6 +47,7 @@ def create_application() -> FastAPI:
     app.include_router(portfolios.router)
     app.include_router(positions.router)
     app.include_router(orders.router)
+    app.include_router(providers.router)
 
     return app
 

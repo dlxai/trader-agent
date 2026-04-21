@@ -5,6 +5,8 @@ import {
   ArrowUpDown,
   Plus,
   Briefcase,
+  Filter,
+  MoreHorizontal,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -20,57 +22,32 @@ import {
   cn,
   getPnlColor,
 } from '@/lib/utils'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/Dialog'
-
-interface PositionWithPortfolio {
-  id: string
-  symbol: string
-  exchange: string
-  side: 'long' | 'short'
-  quantity: number
-  avgCost: number
-  currentPrice: number
-  marketValue: number
-  unrealizedPnl: number
-  pnlPercentage: number
-  portfolio: {
-    id: string
-    name: string
-  }
-}
 
 export default function PositionsPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'symbol'>('value')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
-  const { data: positions, isLoading } = useQuery({
+  const { data: positionsResponse, isLoading } = useQuery({
     queryKey: ['positions'],
     queryFn: () => positionsApi.getAll(),
   })
 
-  const filteredPositions = positions?.filter(
+  const positions = positionsResponse?.items || []
+
+  const filteredPositions = positions.filter(
     (pos) =>
-      pos.symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pos.portfolio.name.toLowerCase().includes(searchQuery.toLowerCase())
+      pos.symbol.toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const sortedPositions = filteredPositions?.sort((a, b) => {
+  const sortedPositions = filteredPositions.sort((a, b) => {
     let comparison = 0
     switch (sortBy) {
       case 'value':
-        comparison = a.marketValue - b.marketValue
+        comparison = a.size * a.current_price - b.size * b.current_price
         break
       case 'pnl':
-        comparison = a.unrealizedPnl - b.unrealizedPnl
+        comparison = Number(a.unrealized_pnl) - Number(b.unrealized_pnl)
         break
       case 'symbol':
         comparison = a.symbol.localeCompare(b.symbol)
@@ -169,46 +146,46 @@ export default function PositionsPage() {
               </TableHeader>
               <TableBody>
                 {sortedPositions.map((position) => {
-                  const pnlIsPositive = position.unrealizedPnl >= 0
+                  const marketValue = Number(position.size) * Number(position.current_price)
                   return (
                     <TableRow key={position.id}>
                       <TableCell className="font-medium">
                         <div className="flex items-center gap-2">
                           <span className="text-foreground">{position.symbol}</span>
                           <Badge variant="outline" className="text-2xs">
-                            {position.exchange}
+                            {position.market_id}
                           </Badge>
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {position.portfolio.name}
+                        {position.portfolio?.name || '-'}
                       </TableCell>
                       <TableCell>
                         <Badge
-                          variant={position.side === 'long' ? 'success' : 'error'}
+                          variant={position.side === 'yes' ? 'success' : 'error'}
                           className="capitalize"
                         >
                           {position.side}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {formatNumber(position.quantity, { maximumFractionDigits: 8 })}
+                        {formatNumber(Number(position.size), { maximumFractionDigits: 8 })}
                       </TableCell>
                       <TableCell className="text-right font-mono text-muted-foreground">
-                        {formatCurrency(position.avgCost)}
+                        {formatCurrency(Number(position.entry_price))}
                       </TableCell>
                       <TableCell className="text-right font-mono">
-                        {formatCurrency(position.currentPrice)}
+                        {formatCurrency(Number(position.current_price))}
                       </TableCell>
                       <TableCell className="text-right font-mono font-medium">
-                        {formatCurrency(position.marketValue)}
+                        {formatCurrency(marketValue)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className={cn('font-mono', getPnlColor(position.unrealizedPnl))}>
-                          {formatCurrency(position.unrealizedPnl)}
+                        <div className={cn('font-mono', getPnlColor(Number(position.unrealized_pnl)))}>
+                          {formatCurrency(Number(position.unrealized_pnl))}
                         </div>
-                        <div className={cn('text-xs font-mono', getPnlColor(position.pnlPercentage))}>
-                          {formatPercentage(position.pnlPercentage)}
+                        <div className={cn('text-xs font-mono', getPnlColor(Number(position.pnl_percent)))}>
+                          {formatPercentage(Number(position.pnl_percent))}
                         </div>
                       </TableCell>
                       <TableCell>

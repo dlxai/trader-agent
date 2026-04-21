@@ -47,7 +47,14 @@
       "Bash(findstr:*)",
       "Bash(/d/wework/trader-agent/docs/superpowers/plans/2025-01-20-python-unified-backend-implementation-plan.md:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(lsof:*)",
+      "Bash(poetry run python:*)",
+      "Bash(poetry run uvicorn:*)",
+      "Bash(gh repo view:*)",
+      "Bash(set http_proxy=http://127.0.0.1:7890)",
+      "Bash(set https_proxy=http://127.0.0.1:7890)"
     ]
   }
 }

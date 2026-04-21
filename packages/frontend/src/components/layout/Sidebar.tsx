@@ -150,7 +150,7 @@ export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
           <div className="mt-4 flex items-center gap-3 rounded-md border border-void-300 bg-void-100 p-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-500">
               <span className="text-xs font-medium">
-                {user.name.slice(0, 2).toUpperCase()}
+                {(user.name || 'U').slice(0, 2).toUpperCase()}
               </span>
             </div>
             <div className="flex-1 min-w-0">

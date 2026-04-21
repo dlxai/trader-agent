@@ -78,12 +78,12 @@ export function Header({ onMenuClick, onToggleSidebar, isSidebarOpen }: HeaderPr
         {user && (
           <div className="flex items-center gap-3 pl-4 border-l border-void-300">
             <div className="hidden md:block text-right">
-              <p className="text-sm font-medium">{user.name}</p>
+              <p className="text-sm font-medium">{(user as any).username || (user as any).name || 'User'}</p>
               <p className="text-xs text-muted-foreground">{user.email}</p>
             </div>
             <div className="h-9 w-9 rounded-full bg-emerald-500/10 flex items-center justify-center">
               <span className="text-sm font-medium text-emerald-500">
-                {user.name.slice(0, 2).toUpperCase()}
+                {((user as any).username || (user as any).name || 'U').slice(0, 2).toUpperCase()}
               </span>
             </div>
           </div>

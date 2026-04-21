@@ -260,6 +260,44 @@ export interface ApiError {
 }
 
 // Settings types
+
+// AI Model Configuration
+export interface AIModelConfig {
+  id: string
+  name: string
+  provider: string
+  enabled: boolean
+  api_key?: string
+  custom_api_url?: string
+  custom_model_name?: string
+}
+
+// Available AI models (from backend reference)
+export const AVAILABLE_AI_MODELS: AIModelConfig[] = [
+  { id: 'deepseek', name: 'DeepSeek V3', provider: 'deepseek', enabled: false },
+  { id: 'deepseek-reasoner', name: 'DeepSeek R1', provider: 'deepseek', enabled: false },
+  { id: 'qwen-turbo', name: 'Qwen Turbo', provider: 'qwen', enabled: false },
+  { id: 'qwen-flash', name: 'Qwen Flash', provider: 'qwen', enabled: false },
+  { id: 'openai', name: 'OpenAI', provider: 'openai', enabled: false },
+  { id: 'claude', name: 'Claude', provider: 'claude', enabled: false },
+  { id: 'gemini', name: 'Gemini', provider: 'gemini', enabled: false },
+  { id: 'grok', name: 'Grok', provider: 'grok', enabled: false },
+  { id: 'kimi', name: 'Kimi', provider: 'kimi', enabled: false },
+  { id: 'minimax', name: 'MiniMax', provider: 'minimax', enabled: false },
+]
+
+// Provider API URLs
+export const AI_PROVIDER_URLS: Record<string, string> = {
+  deepseek: 'https://platform.deepseek.com/api_keys',
+  qwen: 'https://dashscope.console.aliyun.com/apiKey',
+  openai: 'https://platform.openai.com/api-keys',
+  claude: 'https://console.anthropic.com/settings/keys',
+  gemini: 'https://aistudio.google.com/app/apikey',
+  grok: 'https://console.x.ai/',
+  kimi: 'https://platform.moonshot.ai/console/api-keys',
+  minimax: 'https://platform.minimax.io',
+}
+
 export interface UserSettings {
   theme: 'dark' | 'light' | 'system';
   language: string;
@@ -282,6 +320,8 @@ export interface UserSettings {
     widgets: string[];
     layout: 'compact' | 'comfortable';
   };
+  // AI Models
+  ai_models?: AIModelConfig[];
 }
 
 // Dashboard types
@@ -306,4 +346,137 @@ export interface AssetAllocation {
   value: number;
   percentage: number;
   color: string;
+}
+
+// Strategy types (新增)
+export interface Strategy {
+  id: string;
+  user_id: string;
+  portfolio_id: string;
+  provider_id?: string;
+
+  name: string;
+  description?: string;
+  type: string;
+  is_active: boolean;
+  is_paused: boolean;
+  status: 'draft' | 'testing' | 'active' | 'paused' | 'stopped' | 'archived';
+
+  // AI 配置
+  system_prompt?: string;
+  custom_prompt?: string;
+  data_sources?: Record<string, unknown>;
+
+  // 下单金额
+  min_order_size: number;
+  max_order_size: number;
+
+  // 市场过滤
+  market_filter_days?: number;
+  market_filter_type?: '24h' | '7d' | 'custom';
+
+  // 执行间隔
+  run_interval_minutes: number;
+  last_run_at?: string;
+  total_runs: number;
+
+  // 风险控制
+  max_position_size?: number;
+  max_open_positions?: number;
+  stop_loss_percent?: number;
+  take_profit_percent?: number;
+
+  // 绩效
+  total_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  total_pnl: number;
+  sharpe_ratio?: number;
+
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStrategyRequest {
+  name: string;
+  description?: string;
+  portfolio_id: string;
+  provider_id?: string;
+  system_prompt?: string;
+  custom_prompt?: string;
+  data_sources?: Record<string, unknown>;
+  min_order_size: number;
+  max_order_size: number;
+  market_filter_days?: number;
+  market_filter_type?: string;
+  run_interval_minutes?: number;
+  max_position_size?: number;
+  max_open_positions?: number;
+  stop_loss_percent?: number;
+  take_profit_percent?: number;
+}
+
+export interface UpdateStrategyRequest {
+  name?: string;
+  description?: string;
+  provider_id?: string;
+  system_prompt?: string;
+  custom_prompt?: string;
+  data_sources?: Record<string, unknown>;
+  min_order_size?: number;
+  max_order_size?: number;
+  market_filter_days?: number;
+  market_filter_type?: string;
+  run_interval_minutes?: number;
+  max_position_size?: number;
+  max_open_positions?: number;
+  stop_loss_percent?: number;
+  take_profit_percent?: number;
+  is_active?: boolean;
+}
+
+export interface StrategySummary {
+  id: string;
+  name: string;
+  type: string;
+  is_active: boolean;
+  status: string;
+  min_order_size: number;
+  max_order_size: number;
+  total_trades: number;
+  total_pnl: number;
+}
+
+// Signal types (新增)
+export interface SignalLog {
+  id: string;
+  user_id: string;
+  portfolio_id?: string;
+  strategy_id?: string;
+  position_id?: string;
+
+  signal_id: string;
+  signal_type: 'buy' | 'sell' | 'hold' | 'close';
+  confidence: number;
+  side: 'yes' | 'no';
+
+  size?: number;
+  stop_loss_price?: number;
+  take_profit_price?: number;
+  risk_reward_ratio?: number;
+
+  status: 'pending' | 'analyzing' | 'risk_check' | 'approved' | 'rejected' | 'executed' | 'expired';
+
+  // AI 思维链 (新增)
+  ai_thinking?: string;
+  ai_model?: string;
+  ai_tokens_used?: number;
+  ai_duration_ms?: number;
+  input_summary?: Record<string, unknown>;
+  decision_details?: Record<string, unknown>;
+  signal_reason?: string;
+  technical_indicators?: Record<string, unknown>;
+
+  created_at: string;
+  updated_at: string;
 }

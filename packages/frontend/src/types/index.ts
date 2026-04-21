@@ -365,7 +365,12 @@ export interface Strategy {
   // AI 配置
   system_prompt?: string;
   custom_prompt?: string;
-  data_sources?: Record<string, unknown>;
+  data_sources?: StrategyDataSources;
+  trigger?: StrategyTrigger;
+  filters?: StrategyFilters;
+  position_monitor?: StrategyPositionMonitor;
+  order_config?: StrategyOrderConfig;
+  risk_config?: StrategyRiskConfig;
 
   // 下单金额
   min_order_size: number;
@@ -404,7 +409,12 @@ export interface CreateStrategyRequest {
   provider_id?: string;
   system_prompt?: string;
   custom_prompt?: string;
-  data_sources?: Record<string, unknown>;
+  data_sources?: StrategyDataSources;
+  trigger?: StrategyTrigger;
+  filters?: StrategyFilters;
+  position_monitor?: StrategyPositionMonitor;
+  order_config?: StrategyOrderConfig;
+  risk_config?: StrategyRiskConfig;
   min_order_size: number;
   max_order_size: number;
   market_filter_days?: number;
@@ -422,7 +432,12 @@ export interface UpdateStrategyRequest {
   provider_id?: string;
   system_prompt?: string;
   custom_prompt?: string;
-  data_sources?: Record<string, unknown>;
+  data_sources?: StrategyDataSources;
+  trigger?: StrategyTrigger;
+  filters?: StrategyFilters;
+  position_monitor?: StrategyPositionMonitor;
+  order_config?: StrategyOrderConfig;
+  risk_config?: StrategyRiskConfig;
   min_order_size?: number;
   max_order_size?: number;
   market_filter_days?: number;
@@ -479,4 +494,58 @@ export interface SignalLog {
 
   created_at: string;
   updated_at: string;
+}
+
+// 数据源配置
+export interface StrategyDataSources {
+  enable_market_data: boolean;
+  enable_activity: boolean;
+  enable_sports_score: boolean;
+}
+
+// 触发条件
+export interface StrategyTrigger {
+  price_change_threshold: number;
+  activity_netflow_threshold: number;
+  min_trigger_interval: number;
+  scan_interval: number;
+}
+
+// 信号过滤
+export interface StrategyFilters {
+  min_confidence: number;
+  min_price: number;
+  max_price: number;
+  max_spread: number;
+  max_slippage: number;
+  dead_zone_enabled: boolean;
+  dead_zone_min: number;
+  dead_zone_max: number;
+  keywords_exclude: string[];
+}
+
+// 持仓监控
+export interface StrategyPositionMonitor {
+  enable_stop_loss: boolean;
+  stop_loss_percent: number;
+  enable_take_profit: boolean;
+  take_profit_price: number;
+  enable_trailing_stop: boolean;
+  trailing_stop_percent: number;
+  enable_auto_redeem: boolean;
+}
+
+// 下单配置
+export interface StrategyOrderConfig {
+  min_order_size: number;
+  max_order_size: number;
+  default_amount: number;
+}
+
+// 风险控制
+export interface StrategyRiskConfig {
+  max_positions: number;
+  min_risk_reward_ratio: number;
+  max_margin_usage: number;
+  min_position_size: number;
 }

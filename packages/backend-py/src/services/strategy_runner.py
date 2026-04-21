@@ -108,6 +108,11 @@ class StrategyRunner:
         )
 
         # 4. 创建 SignalLog
+        # 从 markets 列表中获取第一个市场（简化示例，实际应该根据 ai_result 选择对应的市场）
+        market = markets[0] if markets else {}
+        market_id = market.get("id", "")
+        symbol = market.get("symbol", "")
+
         signal_log = SignalLog(
             id=UUID(),
             user_id=strategy.user_id,
@@ -129,6 +134,8 @@ class StrategyRunner:
             ai_duration_ms=ai_result.get("duration_ms"),
             input_summary=ai_result.get("input_summary"),
             decision_details=ai_result.get("decision_details"),
+            market_id=market_id,
+            symbol=symbol,
         )
 
         db.add(signal_log)
@@ -186,31 +193,56 @@ class StrategyRunner:
             return
 
         try:
-            # 1. 获取市场信息（从 signal_log 或重新获取）
-            # signal_log 中应该有 market_id 或相关市场信息
+            # 1. 从 signal_log 获取 market 信息
+            # signal_log 应该有 market_id 或 condition_id
+            market_id = signal_log.market_id
 
-            # 2. 获取 token_id
-            # 需要根据市场获取 YES/NO token_id
-            # 可以使用 sdk.gamma_api.get_market() 获取详情
+            if not market_id:
+                print("No market_id in signal")
+                return
 
-            # 3. 执行市价单
-            side = Side.YES if signal_log.side == "yes" else Side.NO
+            # 2. 获取市场详情，包含 token_id
+            market = await self.sdk.gamma_api.get_market(market_id)
 
-            # 注意：这里需要根据市场实际情况获取 token_id
-            # 暂时使用示例值，实际需要从市场数据中获取
-            # 假设 signal_log 有 market_id，从市场详情中获取 token_id
-            # 这里需要实现根据市场获取 token_id 的逻辑
+            if not market:
+                print(f"Market not found: {market_id}")
+                return
+
+            # 3. 根据 side (yes/no) 获取对应的 token_id
+            side = "yes" if signal_log.side == "yes" else "no"
+
+            # 从市场数据中获取 token_id
+            # 市场数据通常包含 tokens 或 clob_token_ids
+            tokens = market.get("tokens", [])
+
+            token_id = None
+            for token in tokens:
+                if token.get("outcome") == side:
+                    token_id = token.get("token_id")
+                    break
+
+            if not token_id:
+                # 备用：从 clob_token_ids 获取
+                clob_token_ids = market.get("clob_token_ids", {})
+                token_id = clob_token_ids.get(side)
+
+            if not token_id:
+                print(f"Token not found for side: {side}")
+                return
+
+            # 4. 执行市价单
+            order_side = Side.YES if signal_log.side == "yes" else Side.NO
 
             result = await self.sdk.trading_service.create_market_order(
-                token_id="",  # 需要从市场获取
-                side=side,
+                token_id=token_id,
+                side=order_side,
                 amount=float(signal_log.size),
                 order_type="GTC"
             )
 
             print(f"Order placed: {result}")
 
-            # 4. 创建 Order 记录
+            # 5. 创建 Order 记录
             order = Order(
                 id=UUID(),
                 user_id=strategy.user_id,
@@ -222,15 +254,17 @@ class StrategyRunner:
                 side=signal_log.side,
                 order_type="market",
                 size=signal_log.size,
-                filled_size=result.get("size", signal_log.size),
+                filled_size=Decimal(str(result.get("size", signal_log.size))),
                 status="filled",
-                # ... 其他字段
+                # 其他必要字段...
             )
             db.add(order)
             await db.commit()
 
         except Exception as e:
             print(f"Order execution failed: {e}")
+            import traceback
+            traceback.print_exc()
             signal_log.status = "failed"
             await db.commit()
 

@@ -236,128 +236,42 @@ class StrategyListResponse(PaginatedResponse[StrategySummary]):
 
 
 class StrategyFilters(BaseSchema):
-    """信号过滤配置"""
-    # 基础过滤
-    min_signal_confidence: Optional[Decimal] = Field(default=Decimal("0.5"), ge=0, le=1.0)
-    max_slippage_percent: Optional[Decimal] = Field(default=Decimal("0.5"), ge=0, le=10)
-    min_volume: Optional[Decimal] = None
-    min_market_cap: Optional[Decimal] = None
-    exclude_volatile: bool = Field(default=False)
-    volatility_threshold: Optional[Decimal] = Field(default=Decimal("5"), ge=0, le=100)
-
-    # 时间过滤
-    avoid_market_open_minutes: Optional[int] = Field(default=15, ge=0)
-    avoid_market_close_minutes: Optional[int] = Field(default=15, ge=0)
-    trading_days_only: bool = Field(default=True)
-
-    # 信号聚合
-    require_multiple_signals: bool = Field(default=False)
-    min_signal_count: int = Field(default=2, ge=1)
-    signal_window_minutes: int = Field(default=60, ge=1)
-
-    # 新闻/事件过滤
-    check_news_sentiment: bool = Field(default=False)
-    max_negative_news_score: Optional[Decimal] = Field(default=Decimal("-0.5"), le=0)
-
-    # 相关性过滤
-    avoid_correlated_positions: bool = Field(default=False)
-    max_correlation: Decimal = Field(default=Decimal("0.7"), ge=0, le=1.0)
-    correlation_lookback_days: int = Field(default=30, ge=1)
+    """Signal filtering configuration."""
+    min_confidence: int = Field(default=40, ge=0, le=100)
+    min_price: Decimal = Field(default=Decimal("0.50"), ge=0, le=1)
+    max_price: Decimal = Field(default=Decimal("0.99"), ge=0, le=1)
+    max_spread: Decimal = Field(default=Decimal("3"), ge=0, le=100)
+    max_slippage: Decimal = Field(default=Decimal("2"), ge=0, le=100)
+    dead_zone_enabled: bool = Field(default=True)
+    dead_zone_min: Decimal = Field(default=Decimal("0.70"), ge=0, le=1)
+    dead_zone_max: Decimal = Field(default=Decimal("0.80"), ge=0, le=1)
+    keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
 
 
 class StrategyPositionMonitor(BaseSchema):
-    """持仓监控配置"""
-    # 持仓限制
-    max_positions_per_market: int = Field(default=3, ge=1)
-    max_positions_per_asset: int = Field(default=1, ge=1)
-    max_correlated_positions: int = Field(default=2, ge=1)
-
-    # 风险监控
-    auto_close_on_max_loss: bool = Field(default=False)
-    max_total_loss_percent: Optional[Decimal] = Field(default=Decimal("10"), ge=0, le=100)
-    auto_close_on_drawdown: bool = Field(default=False)
-    max_drawdown_percent: Optional[Decimal] = Field(default=Decimal("20"), ge=0, le=100)
-
-    # 预警设置
-    enable_alerts: bool = Field(default=True)
-    alert_threshold_percent: Decimal = Field(default=Decimal("5"), ge=0, le=100)
-
-    # 分批平仓
-    partial_close_enabled: bool = Field(default=False)
-    partial_close_threshold: Decimal = Field(default=Decimal("3"), ge=0)
-    partial_close_percent: Decimal = Field(default=Decimal("50"), ge=0, le=100)
-
-    # 持仓时间限制
-    max_holding_period_hours: Optional[int] = None
-    auto_close_on_time: bool = Field(default=False)
+    """Position monitoring configuration."""
+    enable_stop_loss: bool = Field(default=True)
+    stop_loss_percent: Decimal = Field(default=Decimal("-15"), le=0)
+    enable_take_profit: bool = Field(default=True)
+    take_profit_price: Decimal = Field(default=Decimal("0.999"), ge=0, le=1)
+    enable_trailing_stop: bool = Field(default=True)
+    trailing_stop_percent: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+    enable_auto_redeem: bool = Field(default=True)
 
 
 class StrategyTrigger(BaseSchema):
-    """触发条件配置"""
-    # 触发类型
-    trigger_type: str = Field(default="signal")
-    allowed_triggers: List[str] = Field(default_factory=lambda: ["signal", "schedule", "event", "manual"])
-
-    # 信号触发
-    signal_source: Optional[str] = None
-    signal_indicator: Optional[str] = None
-    signal_condition: Optional[str] = None
-    signal_threshold: Optional[Decimal] = None
-
-    # 定时触发
-    schedule_cron: Optional[str] = None
-    schedule_interval_minutes: Optional[int] = Field(default=60, ge=1)
-    schedule_timezone: str = Field(default="UTC")
-
-    # 事件触发
-    event_type: Optional[str] = None
-    event_conditions: Optional[Dict] = None
-
-    # 批量触发
-    batch_signals: bool = Field(default=False)
-    batch_size: int = Field(default=1, ge=1)
-    batch_window_seconds: int = Field(default=60, ge=1)
-
-    # 冷却时间
-    cooldown_enabled: bool = Field(default=True)
-    cooldown_minutes: int = Field(default=30, ge=0)
-    cooldown_per_asset: bool = Field(default=True)
-
-    # 触发限制
-    max_triggers_per_run: int = Field(default=5, ge=1)
-    max_daily_triggers: Optional[int] = Field(default=20, ge=1)
+    """Trigger configuration."""
+    price_change_threshold: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+    activity_netflow_threshold: Decimal = Field(default=Decimal("1000"), ge=0)
+    min_trigger_interval: int = Field(default=5, ge=1, le=1440)
+    scan_interval: int = Field(default=15, ge=1, le=1440)
 
 
 class StrategyDataSources(BaseSchema):
-    """数据源配置"""
-    # 价格数据
-    price_source: str = Field(default="primary")
-    price_sources_fallback: List[str] = Field(default_factory=list)
-    price_update_frequency_seconds: int = Field(default=60, ge=1)
-
-    # 市场数据
-    market_data_source: str = Field(default="default")
-    include_orderbook: bool = Field(default=False)
-    orderbook_depth: int = Field(default=10, ge=1, le=50)
-
-    # 技术指标
-    indicators_source: str = Field(default="default")
-    indicator_timeframes: List[str] = Field(default_factory=lambda: ["1h", "4h", "1d"])
-    include_custom_indicators: bool = Field(default=False)
-
-    # 新闻和情绪
-    news_source: Optional[str] = None
-    sentiment_source: Optional[str] = None
-    news_lookback_hours: int = Field(default=24, ge=1)
-
-    # 社交/链上数据
-    social_source: Optional[str] = None
-    onchain_source: Optional[str] = None
-    social_lookback_hours: int = Field(default=6, ge=1)
-
-    # 备用源
-    fallback_enabled: bool = Field(default=True)
-    fallback_timeout_seconds: int = Field(default=10, ge=1)
+    """Data sources configuration."""
+    enable_market_data: bool = Field(default=True)
+    enable_activity: bool = Field(default=True)
+    enable_sports_score: bool = Field(default=True)
 
 
 # Update forward references

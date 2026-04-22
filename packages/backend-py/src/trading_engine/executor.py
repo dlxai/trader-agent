@@ -231,7 +231,7 @@ class OrderExecutor:
             source="executor",
             payload=order_data,
         )
-        await self.event_bus.publish(EventType.ORDER_CREATED, order_event)
+        await self.event_bus.publish(order_event)
 
     def _signal_to_order(self, signal_data: Dict[str, Any]) -> Dict[str, Any]:
         """Convert signal to order data."""
@@ -255,7 +255,7 @@ class OrderExecutor:
             source="executor",
             payload=order_data,
         )
-        await self.event_bus.publish(EventType.ORDER_SUBMITTED, submit_event)
+        await self.event_bus.publish(submit_event)
 
         # Execute via exchange adapter
         result = await self.exchange_adapter.submit_order(
@@ -294,7 +294,8 @@ class OrderExecutor:
                 "error_message": result.error_message,
             },
         )
-        await self.event_bus.publish(event_type, result_event)
+        result_event.type = event_type
+        await self.event_bus.publish(result_event)
 
 
 def create_executor(

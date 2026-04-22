@@ -351,9 +351,11 @@ class SignalAnalyzer:
         )
 
         if result.approved:
-            await self.event_bus.publish(EventType.SIGNAL_APPROVED, result_event)
+            result_event.type = EventType.SIGNAL_APPROVED
+            await self.event_bus.publish(result_event)
         else:
-            await self.event_bus.publish(EventType.SIGNAL_REJECTED, result_event)
+            result_event.type = EventType.SIGNAL_REJECTED
+            await self.event_bus.publish(result_event)
 
     def _parse_signal(self, data: Dict[str, Any]) -> Signal:
         """Parse signal from event payload."""

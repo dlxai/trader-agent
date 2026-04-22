@@ -259,7 +259,7 @@ class PerformanceReviewer:
                 "metrics": self._serialize_metrics(metrics),
             },
         )
-        await self.event_bus.publish(EventType.SIGNAL_GENERATED, report_event)
+        await self.event_bus.publish(report_event)
 
         return report
 

@@ -312,10 +312,10 @@ class StrategyFilters(BaseSchema):
     keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
 
     # 到期时间过滤（来自 polymarket-agent）
-    # 超过这个小时数的市场不交易（设为负数则不限制）
-    # 通用策略：-1（不限制）
-    # 尾盘策略：6（只交易6小时内到期的）
-    max_hours_to_expiry: Decimal = Field(default=Decimal("-1"))
+    # 超过这个小时数的市场不交易
+    # 通用策略：6（超过6小时忽略）
+    # 尾盘策略：2（超过2小时忽略）
+    max_hours_to_expiry: Decimal = Field(default=Decimal("6"))
 
 
 class StrategyPositionMonitor(BaseSchema):

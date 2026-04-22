@@ -65,8 +65,8 @@ export const DEFAULT_FILTERS = {
   dead_zone_max: 0.8,
   keywords_exclude: ['o/u', 'spread'],
 
-  // 到期时间过滤：超过这个小时数的市场不交易（-1表示不限制）
-  max_hours_to_expiry: -1,
+  // 到期时间过滤：超过这个小时数的市场不交易
+  max_hours_to_expiry: 6,  // 通用：6小时内
 };
 
 // 尾盘策略预设值
@@ -74,7 +74,7 @@ export const TAIL_FILTERS = {
   ...DEFAULT_FILTERS,
   min_price: 0.95,
   max_price: 0.99,
-  max_hours_to_expiry: 2,  // 2小时内到期
+  max_hours_to_expiry: 2,  // 尾盘：2小时内
 };
 
 export const DEFAULT_ORDER = {

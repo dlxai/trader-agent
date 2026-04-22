@@ -8,7 +8,6 @@ import {
   Play,
   Pause,
   Trash2,
-  Edit,
   Brain,
   Settings,
   Database,
@@ -36,7 +35,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/Dialog'
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
@@ -74,7 +72,7 @@ const tabLabels: Record<string, string> = {
   risk: '风险控制',
 }
 
-function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit }: { strategy: StrategySummary; onDelete: (id: string) => void; onStart: (id: string) => void; onStop: (id: string) => void; onEdit: (strategy: StrategySummary) => void }) {
+function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit, isLoading }: { strategy: StrategySummary; onDelete: (id: string) => void; onStart: (id: string) => void; onStop: (id: string) => void; onEdit: (strategy: StrategySummary) => void; isLoading?: boolean }) {
   const pnlIsPositive = Number(strategy.total_pnl) >= 0
 
   return (
@@ -85,14 +83,6 @@ function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit }: { strateg
             <CardTitle className="text-lg">{strategy.name}</CardTitle>
           </div>
           <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 opacity-0 group-hover:opacity-100"
-              onClick={() => onEdit(strategy)}
-            >
-              <Edit className="h-4 w-4" />
-            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -159,17 +149,17 @@ function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit }: { strateg
         {/* Quick Actions */}
         <div className="flex gap-2">
           {strategy.is_active ? (
-            <Button variant="outline" size="sm" className="flex-1" onClick={() => onStop(strategy.id)}>
+            <Button variant="outline" size="sm" className="flex-1" disabled={isLoading} isLoading={isLoading} onClick={() => onStop(strategy.id)}>
               <Pause className="mr-2 h-4 w-4" />
-              停止
+              {isLoading ? '停止中...' : '停止'}
             </Button>
           ) : (
-            <Button variant="outline" size="sm" className="flex-1" onClick={() => onStart(strategy.id)}>
+            <Button variant="outline" size="sm" className="flex-1" disabled={isLoading} isLoading={isLoading} onClick={() => onStart(strategy.id)}>
               <Play className="mr-2 h-4 w-4" />
-              启动
+              {isLoading ? '启动中...' : '启动'}
             </Button>
           )}
-          <Button variant="outline" size="sm" className="flex-1">
+          <Button variant="outline" size="sm" className="flex-1" disabled={isLoading} onClick={() => onEdit(strategy)}>
             <DollarSign className="mr-2 h-4 w-4" />
             编辑
           </Button>
@@ -189,8 +179,8 @@ export default function StrategiesPage() {
   const [newStrategy, setNewStrategy] = useState({
     name: '',
     description: '',
-    min_order_size: 10,
-    max_order_size: 100,
+    min_order_size: 1,
+    max_order_size: 5,
     provider_id: '',
   })
 
@@ -230,7 +220,7 @@ export default function StrategiesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['strategies'] })
       setIsCreateDialogOpen(false)
-      setNewStrategy({ name: '', description: '', min_order_size: 10, max_order_size: 100, provider_id: '' })
+      setNewStrategy({ name: '', description: '', min_order_size: 1, max_order_size: 5, provider_id: '' })
       setConfig({
         template: 'generic',
         data_sources: DEFAULT_DATA_SOURCES,
@@ -269,12 +259,22 @@ export default function StrategiesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['strategies'] })
     },
+    onError: (error: any) => {
+      console.error('Start strategy error:', error)
+      const detail = error?.response?.data?.detail
+      alert('启动失败: ' + (detail || error?.message || '未知错误'))
+    },
   })
 
   const stopMutation = useMutation({
     mutationFn: (id: string) => strategiesApi.stop(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['strategies'] })
+    },
+    onError: (error: any) => {
+      console.error('Stop strategy error:', error)
+      const detail = error?.response?.data?.detail
+      alert('停止失败: ' + (detail || error?.message || '未知错误'))
     },
   })
 
@@ -326,10 +326,11 @@ export default function StrategiesPage() {
         },
         position_monitor: strategy.position_monitor || DEFAULT_POSITION_MONITOR,
         risk: {
-          max_positions: strategy.max_open_positions || 3,
+          max_positions: strategy.max_open_positions || 100,
           min_risk_reward_ratio: (strategy as any).min_risk_reward_ratio || 2.0,
           max_margin_usage: 0.9,
-          min_position_size: 12,
+          min_position_size: 1,
+          max_position_size: 5,
         },
         system_prompt: strategy.system_prompt || DEFAULT_SYSTEM_PROMPT,
         custom_prompt: strategy.custom_prompt || DEFAULT_CUSTOM_PROMPT,
@@ -850,7 +851,7 @@ export default function StrategiesPage() {
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                           value={newStrategy.provider_id || ''}
                           onChange={(e) =>
-                            setNewStrategy((prev) => ({ ...prev, provider_id: e.target.value || undefined }))
+                            setNewStrategy((prev) => ({ ...prev, provider_id: e.target.value }))
                           }
                         >
                           <option value="">选择 Provider...</option>
@@ -1622,6 +1623,7 @@ export default function StrategiesPage() {
               onStart={(id) => startMutation.mutate(id)}
               onStop={(id) => stopMutation.mutate(id)}
               onEdit={handleEdit}
+              isLoading={startMutation.isPending || stopMutation.isPending || deleteMutation.isPending || updateMutation.isPending}
             />
           ))}
         </div>

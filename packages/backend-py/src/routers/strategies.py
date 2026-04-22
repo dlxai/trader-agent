@@ -3,7 +3,7 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select, func
@@ -23,6 +23,7 @@ from src.schemas.strategy import (
 from src.schemas.base import ApiResponse
 from src.dependencies import get_current_active_user
 from src.core.exceptions import NotFoundError
+from src.services.strategy_runner import strategy_runner
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -51,7 +52,7 @@ async def create_strategy(
 
     # 创建策略
     strategy = Strategy(
-        id=UUID(),
+        id=uuid4(),
         user_id=current_user.id,
         portfolio_id=request.portfolio_id,
         name=request.name,
@@ -63,21 +64,17 @@ async def create_strategy(
         data_sources=request.data_sources or {},
         trigger=request.trigger,
         filters=request.filters,
-        order=request.order,
         position_monitor=request.position_monitor,
-        risk=request.risk,
         min_order_size=request.min_order_size,
         max_order_size=request.max_order_size,
         default_amount=request.default_amount,
         market_filter_days=request.market_filter_days,
         market_filter_type=request.market_filter_type,
         run_interval_minutes=request.run_interval_minutes,
-        max_position_size=request.max_position_size or (portfolio.max_position_size if portfolio else None),
-        max_open_positions=request.max_open_positions or (portfolio.max_open_positions if portfolio else None),
-        max_positions=request.max_positions or 3,
-        min_risk_reward_ratio=request.min_risk_reward_ratio or Decimal("2.0"),
-        max_margin_usage=request.max_margin_usage or Decimal("0.9"),
-        min_position_size=request.min_position_size or Decimal("12"),
+        max_position_size=request.max_position_size,
+        max_open_positions=request.max_open_positions,
+        max_positions=getattr(request, 'max_positions', 100),
+        min_risk_reward_ratio=request.min_risk_reward_ratio,
         stop_loss_percent=request.stop_loss_percent or (portfolio.stop_loss_percent if portfolio else None),
         take_profit_percent=request.take_profit_percent or (portfolio.take_profit_percent if portfolio else None),
         order_type=request.order_type or "market",
@@ -116,7 +113,10 @@ async def list_strategies(
     db: AsyncSession = Depends(get_async_session),
 ):
     """List user's strategies."""
-    query = select(Strategy).where(Strategy.user_id == current_user.id)
+    query = select(Strategy).where(
+        Strategy.user_id == current_user.id,
+        Strategy.status != "archived",
+    )
 
     if portfolio_id:
         query = query.where(Strategy.portfolio_id == portfolio_id)
@@ -294,6 +294,13 @@ async def start_strategy(
     await db.commit()
     await db.refresh(strategy)
 
+    # 启动策略执行循环
+    try:
+        await strategy_runner.start_strategy(strategy_id)
+    except Exception as e:
+        # 即使 runner 启动失败，策略状态也已更新
+        print(f"Strategy runner error: {e}")
+
     return ApiResponse(
         success=True,
         data=StrategyResponse.model_validate(strategy),
@@ -327,6 +334,12 @@ async def stop_strategy(
 
     await db.commit()
     await db.refresh(strategy)
+
+    # 停止策略执行循环
+    try:
+        await strategy_runner.stop_strategy(strategy_id)
+    except Exception as e:
+        print(f"Strategy runner stop error: {e}")
 
     return ApiResponse(
         success=True,

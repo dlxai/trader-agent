@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Bell, Shield, Palette, Moon, Sun, Monitor, Eye, EyeOff, Brain, ExternalLink } from 'lucide-react'
+import { useState } from 'react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { Bell, Shield, Palette, Moon, Sun, Monitor, Eye, EyeOff } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
@@ -10,7 +10,6 @@ import { Switch } from '@/components/ui/Switch'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/stores/theme'
 import { settingsApi } from '@/lib/api'
-import { AVAILABLE_AI_MODELS, AI_PROVIDER_URLS, type AIModelConfig } from '@/types'
 
 interface SettingsSectionProps {
   title: string
@@ -279,169 +278,6 @@ function NotificationSettings() {
               }
             />
           </div>
-        </div>
-      </div>
-    </SettingsSection>
-  )
-}
-
-function AIModelSettings() {
-  const queryClient = useQueryClient()
-
-  // Initialize with default models
-  const [models, setModels] = useState<AIModelConfig[]>(
-    AVAILABLE_AI_MODELS.map(m => ({ ...m, enabled: false, api_key: '', custom_api_url: '', custom_model_name: '' }))
-  )
-
-  // Fetch current preferences from backend
-  const { data: currentPrefs } = useQuery({
-    queryKey: ['user-preferences'],
-    queryFn: () => settingsApi.getSettings(),
-  })
-
-  // Update models when preferences load
-  useEffect(() => {
-    if (currentPrefs?.ai_models) {
-      setModels(prev => prev.map(m => {
-        const saved = currentPrefs.ai_models?.find(sm => sm.id === m.id)
-        return saved ? { ...m, ...saved } : m
-      }))
-    }
-  }, [currentPrefs])
-
-  const saveMutation = useMutation({
-    mutationFn: (aiModels: AIModelConfig[]) =>
-      settingsApi.updateSettings({ ai_models: aiModels } as any),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-preferences'] })
-      alert('配置已保存')
-    },
-    onError: (error) => {
-      console.error('Failed to save models:', error)
-      alert('保存失败，请重试')
-    },
-  })
-
-  const toggleModel = (modelId: string) => {
-    setModels(prev => prev.map(m =>
-      m.id === modelId ? { ...m, enabled: !m.enabled } : m
-    ))
-  }
-
-  const updateModelApiKey = (modelId: string, apiKey: string) => {
-    setModels(prev => prev.map(m =>
-      m.id === modelId ? { ...m, api_key: apiKey } : m
-    ))
-  }
-
-  const updateModelCustomUrl = (modelId: string, url: string) => {
-    setModels(prev => prev.map(m =>
-      m.id === modelId ? { ...m, custom_api_url: url } : m
-    ))
-  }
-
-  const updateModelCustomName = (modelId: string, name: string) => {
-    setModels(prev => prev.map(m =>
-      m.id === modelId ? { ...m, custom_model_name: name } : m
-    ))
-  }
-
-  const saveModels = () => {
-    saveMutation.mutate(models)
-  }
-
-  const configuredModels = models.filter(m => m.enabled && m.api_key)
-
-  return (
-    <SettingsSection
-      title="AI 模型配置"
-      description="配置用于交易决策的 AI 模型"
-    >
-      <div className="space-y-4">
-        {models.map((model) => (
-          <div
-            key={model.id}
-            className={cn(
-              'rounded-lg border p-4 transition-all',
-              model.enabled ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border'
-            )}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
-                  <Brain className="h-5 w-5" />
-                </div>
-                <div>
-                  <h4 className="font-medium">{model.name}</h4>
-                  <p className="text-xs text-muted-foreground capitalize">{model.provider}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={model.enabled}
-                  onCheckedChange={() => toggleModel(model.id)}
-                />
-              </div>
-            </div>
-
-            {model.enabled && (
-              <div className="mt-4 space-y-3">
-                <div className="space-y-2">
-                  <Label>API Key</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="password"
-                      placeholder="输入 API Key"
-                      value={model.api_key || ''}
-                      onChange={(e) => updateModelApiKey(model.id, e.target.value)}
-                      className="flex-1"
-                    />
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => window.open(AI_PROVIDER_URLS[model.provider], '_blank')}
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Custom API URL */}
-                <div className="space-y-2">
-                  <Label>自定义 API URL (可选)</Label>
-                  <Input
-                    placeholder="如使用代理或自定义端点"
-                    value={model.custom_api_url || ''}
-                    onChange={(e) => updateModelCustomUrl(model.id, e.target.value)}
-                  />
-                </div>
-
-                {/* Custom Model Name */}
-                <div className="space-y-2">
-                  <Label>自定义模型名称 (可选)</Label>
-                  <Input
-                    placeholder="如 deepseek-chat, gpt-4 等"
-                    value={model.custom_model_name || ''}
-                    onChange={(e) => updateModelCustomName(model.id, e.target.value)}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-
-        <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-muted/50 p-4">
-          <div>
-            <h4 className="font-medium">已配置模型 ({configuredModels.length})</h4>
-            <p className="text-sm text-muted-foreground mt-1">
-              {configuredModels.length === 0
-                ? '请启用并配置至少一个 AI 模型'
-                : configuredModels.map(m => m.name).join(', ')}
-            </p>
-          </div>
-          <Button onClick={saveModels} isLoading={saveMutation.isPending}>
-            保存配置
-          </Button>
         </div>
       </div>
     </SettingsSection>

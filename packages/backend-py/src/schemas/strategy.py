@@ -35,12 +35,12 @@ class StrategyBase(BaseSchema):
     position_monitor: Optional["StrategyPositionMonitor"] = None
 
     # 下单金额配置
-    min_order_size: Decimal = Field(default=Decimal("5"), ge=0)
-    max_order_size: Decimal = Field(default=Decimal("50"), ge=0)
-    default_amount: Decimal = Field(default=Decimal("5"), ge=0)
+    min_order_size: Decimal = Field(default=Decimal("1"), ge=0)
+    max_order_size: Decimal = Field(default=Decimal("5"), ge=0)
+    default_amount: Decimal = Field(default=Decimal("1"), ge=0)
     min_risk_reward_ratio: Optional[Decimal] = Field(default=Decimal("2.0"), ge=0)
-    max_margin_usage: Decimal = Field(default=Decimal("0.9"), ge=0, le=1.0)
-    min_position_size: Decimal = Field(default=Decimal("12"), ge=0)
+    min_position_size: Decimal = Field(default=Decimal("1"), ge=0)
+    max_position_size: Optional[Decimal] = Field(default=Decimal("5"), ge=0)
 
     # 市场过滤
     market_filter_days: Optional[int] = None

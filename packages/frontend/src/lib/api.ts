@@ -423,6 +423,21 @@ export const providersApi = {
     const response = await apiClient.post<ApiResponse<{ success: boolean; message: string }>>(`/providers/${id}/sync`)
     return response.data.data
   },
+
+  async getProviderTypes(): Promise<Record<string, { name: string; models: string[]; supports: string[] }>> {
+    const response = await apiClient.get<ApiResponse<Record<string, { name: string; models: string[]; supports: string[] }>>>('/providers/types')
+    return response.data.data
+  },
+
+  async fetchModels(apiBase: string, apiKey: string, providerType: string): Promise<{ models: string[]; error?: string }> {
+    const response = await apiClient.post<ApiResponse<string[]>>('/providers/fetch-models', null, {
+      params: { api_base: apiBase, api_key: apiKey, provider_type: providerType },
+    })
+    return {
+      models: response.data.data || [],
+      error: response.data.error?.message || (response.data.message as string) || undefined,
+    }
+  },
 }
 
 // Wallets API (Polymarket)

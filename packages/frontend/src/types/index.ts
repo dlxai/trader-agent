@@ -124,9 +124,15 @@ export interface Provider {
 
 export interface CreateProviderRequest {
   name: string;
-  type: 'exchange' | 'broker' | 'data';
-  config: Record<string, unknown>;
-  credentials?: Record<string, string>;
+  provider_type: string;
+  type?: string;
+  api_key?: string;
+  api_base?: string;
+  api_version?: string;
+  model?: string;
+  temperature?: number;
+  max_tokens?: number;
+  is_default?: boolean;
 }
 
 // Wallet types (Polymarket)
@@ -242,6 +248,7 @@ export interface SystemMessage {
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
+  error?: { message?: string } | null;
   message?: string;
   meta?: {
     page?: number;
@@ -566,4 +573,5 @@ export interface StrategyRiskConfig {
   min_risk_reward_ratio: number;
   max_margin_usage: number;
   min_position_size: number;
+  max_position_size?: number;
 }

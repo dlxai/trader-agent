@@ -55,7 +55,7 @@ export const DEFAULT_TRIGGER = {
 };
 
 export const DEFAULT_FILTERS = {
-  min_confidence: 40,
+  min_confidence: 75,
   min_price: 0.5,
   max_price: 0.99,
   max_spread: 3,
@@ -122,9 +122,9 @@ export const STRATEGY_TEMPLATES: Record<StrategyTemplateType, {
 };
 
 export const DEFAULT_ORDER = {
-  min_order_size: 10,
-  max_order_size: 50,
-  default_amount: 5,
+  min_order_size: 1,
+  max_order_size: 5,
+  default_amount: 1,
 };
 
 export const DEFAULT_POSITION_MONITOR = {
@@ -138,10 +138,11 @@ export const DEFAULT_POSITION_MONITOR = {
 };
 
 export const DEFAULT_RISK = {
-  max_positions: 3,
+  max_positions: 100,
   min_risk_reward_ratio: 2.0,
   max_margin_usage: 0.9,
-  min_position_size: 12,
+  min_position_size: 1,
+  max_position_size: 5,
 };
 
 export const DEFAULT_STRATEGY_CONFIG = {

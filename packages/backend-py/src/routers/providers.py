@@ -286,6 +286,105 @@ async def test_provider(
     )
 
 
+@router.get("/{provider_id}/models", response_model=ApiResponse[list])
+async def get_provider_models(
+    provider_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Fetch available models from the provider API."""
+    result = await db.execute(
+        select(Provider).where(
+            and_(
+                Provider.id == provider_id,
+                Provider.user_id == current_user.id,
+            )
+        )
+    )
+    provider = result.scalar_one_or_none()
+
+    if not provider:
+        from src.core.exceptions import NotFoundError
+        raise NotFoundError("Provider not found")
+
+    if not provider.api_key:
+        from src.core.exceptions import AuthenticationError
+        raise AuthenticationError("API key is required to fetch models")
+
+    if not provider.api_base:
+        return ApiResponse(success=True, data=[], message="No API base URL configured")
+
+    import httpx
+
+    headers = {}
+    if provider.provider_type == "openai" or provider.provider_type == "azure":
+        headers["Authorization"] = f"Bearer {provider.api_key}"
+    elif provider.provider_type == "anthropic":
+        headers["x-api-key"] = provider.api_key
+    else:
+        headers["Authorization"] = f"Bearer {provider.api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{provider.api_base.rstrip('/')}/models",
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        # Parse OpenAI-style response: {"object": "list", "data": [{"id": "model-1", ...}, ...]}
+        models = []
+        if isinstance(data, dict) and "data" in data:
+            models = [item["id"] for item in data["data"] if "id" in item]
+        elif isinstance(data, list):
+            models = [item["id"] if isinstance(item, dict) else item for item in data]
+
+        return ApiResponse(success=True, data=models)
+    except httpx.HTTPStatusError as e:
+        return ApiResponse(success=False, data=[], message=f"HTTP error: {e.response.status_code}")
+    except Exception as e:
+        return ApiResponse(success=False, data=[], message=str(e))
+
+
+@router.post("/fetch-models", response_model=ApiResponse[list])
+async def fetch_models_direct(
+    api_base: str,
+    api_key: str,
+    provider_type: str = "openai",
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fetch available models directly from provider API (without saving provider first)."""
+    import httpx
+
+    headers = {}
+    if provider_type == "anthropic":
+        headers["x-api-key"] = api_key
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{api_base.rstrip('/')}/models",
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        models = []
+        if isinstance(data, dict) and "data" in data:
+            models = [item["id"] for item in data["data"] if "id" in item]
+        elif isinstance(data, list):
+            models = [item["id"] if isinstance(item, dict) else item for item in data]
+
+        return ApiResponse(success=True, data=models)
+    except httpx.HTTPStatusError as e:
+        return ApiResponse(success=False, data=[], error={"message": f"HTTP error: {e.response.status_code}"})
+    except Exception as e:
+        return ApiResponse(success=False, data=[], error={"message": str(e)})
+
+
 @router.post("/default/{provider_id}/set", response_model=ApiResponse[ProviderResponse])
 async def set_default_provider(
     provider_id: UUID,

@@ -34,12 +34,21 @@ export default function LoginPage() {
       }
     }
 
-    if (!formData.username) {
-      errors.username = '请输入用户名'
-    } else if (formData.username.length < 3) {
-      errors.username = '用户名至少3个字符'
-    } else if (!/^[a-zA-Z0-9_]+$/.test(formData.username)) {
-      errors.username = '用户名只能包含字母、数字和下划线'
+    // Login mode: allow email (contains @) or username
+    // Register mode: strict username validation
+    if (isRegisterMode) {
+      if (!formData.username) {
+        errors.username = '请输入用户名'
+      } else if (formData.username.length < 3) {
+        errors.username = '用户名至少3个字符'
+      } else if (!/^[a-zA-Z0-9_]+$/.test(formData.username)) {
+        errors.username = '用户名只能包含字母、数字和下划线'
+      }
+    } else {
+      // Login mode: just require non-empty
+      if (!formData.username) {
+        errors.username = '请输入用户名'
+      }
     }
 
     if (!formData.password) {

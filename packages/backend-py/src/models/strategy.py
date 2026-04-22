@@ -41,9 +41,13 @@ class Strategy(Base, TimestampMixin):
     # draft, testing, active, paused, stopped, archived
 
     # Risk parameters
+    min_position_size: Mapped[Decimal] = mapped_column(
+        Numeric(19, 8),
+        default=Decimal("1"),
+    )
     max_position_size: Mapped[Decimal] = mapped_column(
         Numeric(19, 8),
-        default=Decimal("0"),
+        default=Decimal("5"),
     )
     max_open_positions: Mapped[int] = mapped_column(Integer, default=0)
     stop_loss_percent: Mapped[Optional[Decimal]] = mapped_column(

@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Briefcase,
@@ -79,6 +79,7 @@ const bottomNavItems: NavItem[] = [
 
 export function Sidebar({ isCollapsed = false, onClose }: SidebarProps) {
   const { user } = useAuthStore()
+  const location = useLocation()
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {

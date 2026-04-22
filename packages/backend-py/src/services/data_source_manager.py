@@ -159,24 +159,51 @@ class PolymarketDataSource(DataSource):
             self._subscribed_tokens.discard(token_id)
 
     async def get_market_data(self, token_id: str) -> Optional[MarketData]:
-        """Get market data from price monitor"""
-        if not self._price_monitor:
-            return None
+        """Get market data from price monitor (WebSocket优先，HTTP fallback)"""
+        # 1. 尝试从 WebSocket 获取
+        if self._price_monitor:
+            price_update = self._price_monitor.get_current_price(token_id)
+            if price_update:
+                return MarketData(
+                    market_id=token_id,
+                    token_id=token_id,
+                    yes_price=price_update.yes_price,
+                    no_price=price_update.no_price,
+                    change_24h=0,
+                    volume=price_update.volume or 0,
+                    hours_to_expiry=0,
+                    timestamp=price_update.timestamp or datetime.utcnow()
+                )
 
-        price_update = self._price_monitor.get_current_price(token_id)
-        if not price_update:
-            return None
+        # 2. HTTP fallback (如果 WebSocket 不可用)
+        return await self._fetch_price_http(token_id)
 
-        return MarketData(
-            market_id=token_id,
-            token_id=token_id,
-            yes_price=price_update.yes_price,
-            no_price=price_update.no_price,
-            change_24h=0,  # 需要从历史计算
-            volume=price_update.volume or 0,
-            hours_to_expiry=0,  # 需要从 API 获取
-            timestamp=price_update.timestamp or datetime.utcnow()
-        )
+    async def _fetch_price_http(self, token_id: str) -> Optional[MarketData]:
+        """HTTP fallback 获取价格"""
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # 获取 token 信息
+                url = f"https://clob.polymarket.com/markets/{token_id}"
+                response = await client.get(url)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return MarketData(
+                        market_id=token_id,
+                        token_id=token_id,
+                        yes_price=data.get('yes_price', 0.5),
+                        no_price=data.get('no_price', 0.5),
+                        change_24h=data.get('change24h', 0),
+                        volume=data.get('volume', 0),
+                        hours_to_expiry=0,
+                        timestamp=datetime.utcnow()
+                    )
+        except Exception as e:
+            print(f"HTTP fallback failed for {token_id}: {e}")
+
+        return None
 
     async def get_activity(self, token_id: str) -> Optional[ActivityData]:
         """Get activity data from analyzer"""
@@ -252,10 +279,21 @@ class SignalFilter:
 class TriggerChecker:
     """Trigger condition checker using StrategyTrigger configuration"""
 
+    # 分层净流入阈值（来自 polymarket-agent）
+    STAGE_THRESHOLDS = [
+        {'min_price': 0.95, 'max_price': 0.999, 'netflow': 2000},   # Stage1: 高概率
+        {'min_price': 0.90, 'max_price': 0.95, 'netflow': 1000},    # Stage2
+        {'min_price': 0.80, 'max_price': 0.90, 'netflow': 10000},   # Stage3
+        {'min_price': 0.70, 'max_price': 0.80, 'netflow': 4000},    # Stage4
+    ]
+
     def __init__(self, trigger: Dict[str, Any], last_trigger_time: Optional[datetime] = None):
         self.price_change_threshold = trigger.get('price_change_threshold', 5)  # 5%
-        self.activity_netflow_threshold = trigger.get('activity_netflow_threshold', 1000)  # $1000
         self.min_trigger_interval = trigger.get('min_trigger_interval', 5)  # 5 分钟
+        self.use_stage_netflow = trigger.get('use_stage_netflow', True)  # 使用分层阈值
+
+        # 基础净流入阈值（当不使用分层时）
+        self.base_netflow_threshold = trigger.get('activity_netflow_threshold', 1000)
 
         self._last_trigger_time = last_trigger_time
 
@@ -267,9 +305,20 @@ class TriggerChecker:
         change_pct = abs(new_price - old_price) / old_price * 100
         return change_pct >= self.price_change_threshold
 
-    def check_activity_trigger(self, netflow: float) -> bool:
-        """检查 Activity 是否触发"""
-        return abs(netflow) >= self.activity_netflow_threshold
+    def _get_netflow_threshold(self, price: float) -> float:
+        """根据价格获取对应的净流入阈值"""
+        if not self.use_stage_netflow:
+            return self.base_netflow_threshold
+
+        for stage in self.STAGE_THRESHOLDS:
+            if stage['min_price'] <= price <= stage['max_price']:
+                return stage['netflow']
+        return self.base_netflow_threshold  # 默认值
+
+    def check_activity_trigger(self, netflow: float, price: float = 0.5) -> bool:
+        """检查 Activity 是否触发（根据价格区间有不同的阈值）"""
+        threshold = self._get_netflow_threshold(price)
+        return abs(netflow) >= threshold
 
     def check_cooldown(self) -> bool:
         """检查冷却时间"""

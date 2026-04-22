@@ -13,7 +13,7 @@ from .collector import DataCollector
 from .analyzer import SignalAnalyzer
 from .executor import OrderExecutor
 from .reviewer import PerformanceReviewer
-from .risk_manager import RiskManager
+# from .risk_manager import RiskManager  # TODO: implement
 
 __all__ = [
     "EventBus",

@@ -18,6 +18,10 @@ class EventType(Enum):
     ORDER_BOOK_UPDATE = auto()
     TRADE_UPDATE = auto()
 
+    # Factor events (NEW)
+    FACTOR_UPDATED = auto()
+    FACTOR_SNAPSHOT_READY = auto()
+
     # Signal events
     SIGNAL_GENERATED = auto()
     SIGNAL_ANALYZED = auto()

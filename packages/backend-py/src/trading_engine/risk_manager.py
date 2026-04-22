@@ -63,6 +63,7 @@ class RiskManager:
             return ApprovalResult(approved=False, reason="max_positions")
 
         order_id = str(uuid4())
+        self._cooldowns[market_id] = datetime.utcnow()
         return ApprovalResult(approved=True, order_id=order_id)
 
     def on_fill(self, order: dict) -> None:

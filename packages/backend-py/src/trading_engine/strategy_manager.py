@@ -50,6 +50,10 @@ class StrategyInstance:
     _direction_history: List[float] = field(default_factory=list)
     on_decision: Optional[Callable] = None
 
+    def __post_init__(self):
+        if isinstance(self.config, dict):
+            self.config = StrategyConfig(**self.config)
+
     def start(self) -> None:
         if self.state not in (StrategyState.CREATED, StrategyState.STOPPED, StrategyState.PAUSED):
             return

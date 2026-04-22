@@ -86,6 +86,12 @@ class TemporalBuffer:
             else:
                 buffer.event_timeline.append(entry)
 
+            # Expire old entries from rolling window
+            cutoff = datetime.utcnow() - self.window
+            for timeline in (buffer.trade_timeline, buffer.score_timeline, buffer.event_timeline):
+                while timeline and timeline[0].timestamp < cutoff:
+                    timeline.popleft()
+
     def get_game_buffer(self, game_id: str) -> Optional[GameBuffer]:
         """Get buffer for a game."""
         return self._buffers.get(game_id)

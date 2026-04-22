@@ -8,7 +8,7 @@ from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from enum import Enum
 
-from ..config.settings import settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from abc import ABC, abstractmethod
 
-from ..config.settings import settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 

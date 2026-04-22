@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from ..config.settings import settings
+from config.settings import settings
 
 
 logger = logging.getLogger(__name__)

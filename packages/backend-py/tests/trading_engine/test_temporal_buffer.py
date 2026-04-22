@@ -1,6 +1,7 @@
 """Tests for TemporalBuffer."""
 
 import pytest
+import asyncio
 from datetime import datetime, timedelta
 from src.trading_engine.temporal_buffer import TemporalBuffer, GameBuffer
 

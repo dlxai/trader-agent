@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-from ..config.settings import settings
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 

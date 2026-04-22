@@ -22,7 +22,7 @@ import threading
 from web3 import Web3
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from ..config.settings import settings
+from config.settings import settings
 
 
 logger = logging.getLogger(__name__)

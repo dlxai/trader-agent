@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Callable, Any
 from datetime import datetime
 import logging
 
-from ..config.settings import settings
+from config.settings import settings
 from .realtime_checker import RealtimeChecker
 from .periodic_sync import PeriodicSync
 from .websocket_handler import WebSocketHandler

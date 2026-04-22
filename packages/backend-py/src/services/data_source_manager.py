@@ -11,11 +11,15 @@ from datetime import datetime
 from decimal import Decimal
 
 # 添加 strategy-py 到路径
-sys.path.insert(0, "/d/wework/trader-agent/packages/strategy-py/src")
+_backend_py_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_project_root = os.path.dirname(_backend_py_dir)
+_strategy_py_src = os.path.join(_project_root, "strategy-py", "src")
+if _strategy_py_src not in sys.path:
+    sys.path.insert(0, _strategy_py_src)
 
 from strategy.price_monitor import PriceMonitor
 from strategy.activity_analyzer import ActivityAnalyzer
-from strategy.sports_monitor import SportsMonitor
+from strategy.sports_monitor import SportsMarketMonitor
 
 
 @dataclass

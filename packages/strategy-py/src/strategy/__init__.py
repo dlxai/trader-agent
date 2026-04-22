@@ -5,7 +5,7 @@
 - 买入策略决策 (BuyStrategy)
 - 执行引擎 (ExecutionEngine)
 - 信号评估器 (SignalEvaluator)
-- Polymarket专用信号 (PolymarketSignalGenerator)
+- Polymarket专用信号 (PolymarketSignal)
 - 活动分析器 (ActivityAnalyzer)
 - 实时服务 (RealtimeService)
 """
@@ -48,75 +48,100 @@ from .signal_evaluator import (
     SignalRecord,
     SignalOutcome,
     SignalMetrics,
-    create_default_signal_evaluator,
-    evaluate_signals_batch,
 )
 
 # 信号生成器
 from .signal_generator import (
     SignalGenerator,
-    BaseSignalGenerator,
-    SignalData,
-    SignalConfig,
+    Signal,
+    SignalType,
+    LayeredSignalPipeline,
 )
 
 # Polymarket专用信号
 from .polymarket_signals import (
-    PolymarketSignalGenerator,
-    MarketCondition,
+    BaseSignalGenerator,
+    PolymarketSignal,
+    MarketState,
     SignalType,
-    OddsMovement,
-    VolumePattern,
+    SignalStrength,
+    SignalDirection,
+    OrderBookSnapshot,
+    CapitalFlowMetrics,
+    EventInfo,
+    OddsBiasSignalGenerator,
+    TimeDecaySignalGenerator,
+    OrderbookPressureSignalGenerator,
+    CapitalFlowSignalGenerator,
+    InformationEdgeSignalGenerator,
+    CompoundSignalGenerator,
 )
 
 # 活动分析器
 from .activity_analyzer import (
     ActivityAnalyzer,
     MarketActivity,
-    ActivityMetrics,
-    AnomalyType,
-    ActivityConfig,
+    Anomaly,
+    TraderProfile,
 )
 
 # 实时服务
 from .realtime_service import (
     RealtimeService,
-    MarketDataStream,
-    StreamConfig,
-    DataProcessor,
+    EventEmitter,
+    ProxyConfig,
+    ProxyHelper,
+    PolymarketError,
+    ErrorCode,
+    WebSocketTopic,
+    MessageType,
 )
 
 # 入口条件
 from .entry_condition import (
-    EntryCondition,
+    EntryConditionValidator,
     EntryConditionConfig,
-    ConditionResult,
-    ConditionType,
-    MarketState,
+    EntryCheckResult,
+    EntryValidationResult,
 )
 
 # 入口验证器
 from .entry_validator import (
     EntryValidator,
-    EntryValidationConfig,
-    ValidationResult,
-    ValidationRule,
+    EntryValidationResult,
+    EntryRejectionReason,
 )
 
 # 仓位大小
 from .position_sizer import (
     PositionSizer,
-    PositionSizeConfig,
-    PositionSizeResult,
-    KellyCriterion,
+    PositionSizerConfig,
+    PositionSizingResult,
+    Position,
+    PortfolioState,
+    SizingRecommendation,
+    PositionSizingMethod,
+    SizingStrategy,
+    KellyCriterionStrategy,
+    FixedRiskStrategy,
+    ConfidenceWeightedStrategy,
 )
 
 # 资本流分析器
 from .capital_flow_analyzer import (
-    CapitalFlowAnalyzer,
-    CapitalFlowMetrics,
-    FlowAnalyzerConfig,
-    FlowPattern,
+    FlowDirection,
+    SignalStrength,
+    DecisionAction,
+    TradeRecord,
+    FlowMetrics,
+    FlowSignal,
+    DecisionResult,
+    PerformanceMetrics,
+    CapitalFlowCollector,
+    FlowSignalCalculator,
+    FlowAssistedDecision,
+    FlowAnalytics,
+    CapitalFlowAssistedExit,
 )
 
 
@@ -156,57 +181,80 @@ __all__ = [
     "SignalRecord",
     "SignalOutcome",
     "SignalMetrics",
-    "create_default_signal_evaluator",
-    "evaluate_signals_batch",
 
     # Signal Generator
     "SignalGenerator",
-    "BaseSignalGenerator",
-    "SignalData",
-    "SignalConfig",
+    "Signal",
+    "SignalType",
+    "LayeredSignalPipeline",
 
     # Polymarket Signals
-    "PolymarketSignalGenerator",
-    "MarketCondition",
-    "SignalType",
-    "OddsMovement",
-    "VolumePattern",
+    "BaseSignalGenerator",
+    "PolymarketSignal",
+    "MarketState",
+    "SignalStrength",
+    "SignalDirection",
+    "OrderBookSnapshot",
+    "CapitalFlowMetrics",
+    "EventInfo",
+    "OddsBiasSignalGenerator",
+    "TimeDecaySignalGenerator",
+    "OrderbookPressureSignalGenerator",
+    "CapitalFlowSignalGenerator",
+    "InformationEdgeSignalGenerator",
+    "CompoundSignalGenerator",
 
     # Activity Analyzer
     "ActivityAnalyzer",
     "MarketActivity",
-    "ActivityMetrics",
-    "AnomalyType",
-    "ActivityConfig",
+    "Anomaly",
+    "TraderProfile",
 
     # Realtime Service
     "RealtimeService",
-    "MarketDataStream",
-    "StreamConfig",
-    "DataProcessor",
+    "EventEmitter",
+    "ProxyConfig",
+    "ProxyHelper",
+    "PolymarketError",
+    "ErrorCode",
+    "WebSocketTopic",
+    "MessageType",
 
     # Entry Condition
-    "EntryCondition",
+    "EntryConditionValidator",
     "EntryConditionConfig",
-    "ConditionResult",
-    "ConditionType",
-    "MarketState",
+    "EntryCheckResult",
+    "EntryValidationResult",
 
     # Entry Validator
     "EntryValidator",
-    "EntryValidationConfig",
-    "ValidationResult",
-    "ValidationRule",
+    "EntryValidationResult",
+    "EntryRejectionReason",
 
     # Position Sizer
     "PositionSizer",
-    "PositionSizeConfig",
-    "PositionSizeResult",
-    "KellyCriterion",
+    "PositionSizerConfig",
+    "PositionSizingResult",
+    "Position",
+    "PortfolioState",
+    "SizingRecommendation",
+    "PositionSizingMethod",
+    "SizingStrategy",
+    "KellyCriterionStrategy",
+    "FixedRiskStrategy",
+    "ConfidenceWeightedStrategy",
 
     # Capital Flow Analyzer
-    "CapitalFlowAnalyzer",
-    "CapitalFlowMetrics",
-    "FlowAnalyzerConfig",
-    "FlowPattern",
+    "FlowDirection",
+    "DecisionAction",
+    "TradeRecord",
+    "FlowMetrics",
+    "FlowSignal",
+    "DecisionResult",
+    "PerformanceMetrics",
+    "CapitalFlowCollector",
+    "FlowSignalCalculator",
+    "FlowAssistedDecision",
+    "FlowAnalytics",
+    "CapitalFlowAssistedExit",
 ]

@@ -538,14 +538,8 @@ export interface StrategyFilters {
   dead_zone_max: number;
   keywords_exclude: string[];
 
-  // 到期时间过滤（来自 polymarket-agent）
-  min_hours_to_expiry: number;  // 最小到期时间（小时）
-  max_hours_to_expiry: number;  // 最大到期时间（小时）
-
-  // 尾盘专用：价格在 0.95-0.99 时触发
-  tail_mode_enabled: boolean;
-  tail_min_price: number;
-  tail_max_price: number;
+  // 到期时间过滤：超过这个小时数的市场不交易（-1表示不限制）
+  max_hours_to_expiry: number;
 }
 
 // 持仓监控

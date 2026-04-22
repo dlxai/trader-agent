@@ -312,15 +312,10 @@ class StrategyFilters(BaseSchema):
     keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
 
     # 到期时间过滤（来自 polymarket-agent）
-    # 通用策略：min=6小时（避免太早），max=无限制
-    # 尾盘策略：min=0.5小时（30分钟），max=2小时
-    min_hours_to_expiry: Decimal = Field(default=Decimal("6"), ge=0)
-    max_hours_to_expiry: Decimal = Field(default=Decimal("168"), ge=0)  # 默认7天
-
-    # 尾盘专用：价格在 0.95-0.99 时触发
-    tail_mode_enabled: bool = Field(default=False)
-    tail_min_price: Decimal = Field(default=Decimal("0.95"), ge=0, le=1)
-    tail_max_price: Decimal = Field(default=Decimal("0.99"), ge=0, le=1)
+    # 超过这个小时数的市场不交易（设为负数则不限制）
+    # 通用策略：-1（不限制）
+    # 尾盘策略：6（只交易6小时内到期的）
+    max_hours_to_expiry: Decimal = Field(default=Decimal("-1"))
 
 
 class StrategyPositionMonitor(BaseSchema):

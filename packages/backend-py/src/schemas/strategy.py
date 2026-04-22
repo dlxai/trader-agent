@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import List, Optional, Dict
 from uuid import UUID
 
-from pydantic import Field, field_validator, ConfigDict
+from pydantic import Field, field_validator, model_validator, ConfigDict
 
 from .base import BaseSchema, PaginatedResponse
 
@@ -98,6 +98,36 @@ class StrategyBase(BaseSchema):
             raise ValueError(f"time_in_force must be one of {allowed}")
         return v
 
+    @model_validator(mode="after")
+    def validate_amount_fields(self) -> "StrategyBase":
+        """Validate amount field relationships."""
+        errors = []
+
+        # max_order_size >= min_order_size
+        if self.max_order_size < self.min_order_size:
+            errors.append(
+                f"max_order_size ({self.max_order_size}) must be >= min_order_size ({self.min_order_size})"
+            )
+        # default_amount >= min_order_size
+        if self.default_amount < self.min_order_size:
+            errors.append(
+                f"default_amount ({self.default_amount}) must be >= min_order_size ({self.min_order_size})"
+            )
+        # default_amount <= max_order_size (if it passes the first two checks)
+        if not errors and self.default_amount > self.max_order_size:
+            errors.append(
+                f"default_amount ({self.default_amount}) must be <= max_order_size ({self.max_order_size})"
+            )
+        # min_position_size <= max_position_size (if max_position_size is set)
+        if self.max_position_size is not None and self.min_position_size > self.max_position_size:
+            errors.append(
+                f"min_position_size ({self.min_position_size}) must be <= max_position_size ({self.max_position_size})"
+            )
+
+        if errors:
+            raise ValueError("; ".join(errors))
+        return self
+
 
 class StrategyCreate(StrategyBase):
     """Strategy creation request."""
@@ -181,6 +211,40 @@ class StrategyUpdate(BaseSchema):
             raise ValueError(f"time_in_force must be one of {allowed}")
         return v
 
+    @model_validator(mode="after")
+    def validate_amount_fields(self) -> "StrategyUpdate":
+        """Validate amount field relationships when all fields are present."""
+        # Only validate fields that are actually provided (not None)
+        # max_order_size vs min_order_size
+        if self.max_order_size is not None and self.min_order_size is not None:
+            if self.max_order_size < self.min_order_size:
+                raise ValueError(
+                    f"max_order_size ({self.max_order_size}) must be >= min_order_size ({self.min_order_size})"
+                )
+
+        # default_amount vs min_order_size
+        if self.default_amount is not None and self.min_order_size is not None:
+            if self.default_amount < self.min_order_size:
+                raise ValueError(
+                    f"default_amount ({self.default_amount}) must be >= min_order_size ({self.min_order_size})"
+                )
+
+        # default_amount vs max_order_size
+        if self.default_amount is not None and self.max_order_size is not None:
+            if self.default_amount > self.max_order_size:
+                raise ValueError(
+                    f"default_amount ({self.default_amount}) must be <= max_order_size ({self.max_order_size})"
+                )
+
+        # min_position_size vs max_position_size (only if max_position_size is set)
+        if self.min_position_size is not None and self.max_position_size is not None:
+            if self.min_position_size > self.max_position_size:
+                raise ValueError(
+                    f"min_position_size ({self.min_position_size}) must be <= max_position_size ({self.max_position_size})"
+                )
+
+        return self
+
 
 # ============ Response Schemas ============
 
@@ -246,6 +310,17 @@ class StrategyFilters(BaseSchema):
     dead_zone_min: Decimal = Field(default=Decimal("0.70"), ge=0, le=1)
     dead_zone_max: Decimal = Field(default=Decimal("0.80"), ge=0, le=1)
     keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
+
+    # 到期时间过滤（来自 polymarket-agent）
+    # 通用策略：min=6小时（避免太早），max=无限制
+    # 尾盘策略：min=0.5小时（30分钟），max=2小时
+    min_hours_to_expiry: Decimal = Field(default=Decimal("6"), ge=0)
+    max_hours_to_expiry: Decimal = Field(default=Decimal("168"), ge=0)  # 默认7天
+
+    # 尾盘专用：价格在 0.95-0.99 时触发
+    tail_mode_enabled: bool = Field(default=False)
+    tail_min_price: Decimal = Field(default=Decimal("0.95"), ge=0, le=1)
+    tail_max_price: Decimal = Field(default=Decimal("0.99"), ge=0, le=1)
 
 
 class StrategyPositionMonitor(BaseSchema):

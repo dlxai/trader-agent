@@ -405,25 +405,40 @@ export interface Strategy {
 export interface CreateStrategyRequest {
   name: string;
   description?: string;
-  portfolio_id: string;
+  portfolio_id?: string;
   provider_id?: string;
+  type?: string;
   system_prompt?: string;
   custom_prompt?: string;
-  data_sources?: StrategyDataSources;
-  trigger?: StrategyTrigger;
-  filters?: StrategyFilters;
-  position_monitor?: StrategyPositionMonitor;
-  order_config?: StrategyOrderConfig;
-  risk_config?: StrategyRiskConfig;
+  data_sources?: Record<string, unknown>;
+  trigger?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+  position_monitor?: Record<string, unknown>;
+  order?: Record<string, unknown>;
+  risk?: Record<string, unknown>;
   min_order_size: number;
   max_order_size: number;
+  default_amount?: number;
   market_filter_days?: number;
   market_filter_type?: string;
   run_interval_minutes?: number;
   max_position_size?: number;
   max_open_positions?: number;
+  max_positions?: number;
+  min_risk_reward_ratio?: number;
+  max_margin_usage?: number;
+  min_position_size?: number;
   stop_loss_percent?: number;
   take_profit_percent?: number;
+  order_type?: string;
+  time_in_force?: string;
+  slippage_tolerance?: number;
+  allowed_markets?: string[];
+  excluded_markets?: string[];
+  min_liquidity?: number;
+  max_spread_percent?: number;
+  trading_schedule?: Record<string, unknown>;
+  timezone?: string;
 }
 
 export interface UpdateStrategyRequest {
@@ -522,6 +537,15 @@ export interface StrategyFilters {
   dead_zone_min: number;
   dead_zone_max: number;
   keywords_exclude: string[];
+
+  // 到期时间过滤（来自 polymarket-agent）
+  min_hours_to_expiry: number;  // 最小到期时间（小时）
+  max_hours_to_expiry: number;  // 最大到期时间（小时）
+
+  // 尾盘专用：价格在 0.95-0.99 时触发
+  tail_mode_enabled: boolean;
+  tail_min_price: number;
+  tail_max_price: number;
 }
 
 // 持仓监控

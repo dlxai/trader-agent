@@ -64,6 +64,15 @@ export const DEFAULT_FILTERS = {
   dead_zone_min: 0.7,
   dead_zone_max: 0.8,
   keywords_exclude: ['o/u', 'spread'],
+
+  // 到期时间过滤（来自 polymarket-agent）
+  min_hours_to_expiry: 6,   // 最小6小时（通用策略）
+  max_hours_to_expiry: 168, // 最大7天
+
+  // 尾盘专用：价格在 0.95-0.99 时触发
+  tail_mode_enabled: false,
+  tail_min_price: 0.95,
+  tail_max_price: 0.99,
 };
 
 export const DEFAULT_ORDER = {

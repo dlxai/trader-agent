@@ -284,6 +284,7 @@ class StrategySummary(BaseSchema):
     type: str
     is_active: bool
     status: str
+    provider_id: Optional[UUID] = None
     min_order_size: Decimal
     max_order_size: Decimal
     total_trades: int

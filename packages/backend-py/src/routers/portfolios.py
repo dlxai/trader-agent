@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database import get_async_session
 from src.models.portfolio import Portfolio
+from src.models.strategy import Strategy
 from src.models.user import User
 from src.schemas.portfolio import (
     PortfolioCreate,
@@ -118,6 +119,26 @@ async def list_portfolios(
     result = await db.execute(query)
     portfolios = result.scalars().all()
 
+    # Get strategy stats for each portfolio
+    portfolio_ids = [p.id for p in portfolios]
+    strategy_stats = {}
+    if portfolio_ids:
+        stats_query = (
+            select(
+                Strategy.portfolio_id,
+                func.count(Strategy.id).label("strategy_count"),
+                func.coalesce(func.sum(Strategy.total_pnl), Decimal("0")).label("strategy_total_pnl"),
+            )
+            .where(Strategy.portfolio_id.in_(portfolio_ids))
+            .group_by(Strategy.portfolio_id)
+        )
+        stats_result = await db.execute(stats_query)
+        for row in stats_result:
+            strategy_stats[row.portfolio_id] = {
+                "strategy_count": row.strategy_count,
+                "strategy_total_pnl": row.strategy_total_pnl,
+            }
+
     # Convert to summary responses
     items = [
         PortfolioSummaryResponse(
@@ -129,10 +150,14 @@ async def list_portfolios(
             total_pnl=p.total_pnl,
             total_pnl_percent=p.total_pnl_percent,
             total_trades=p.total_trades,
+            strategy_count=strategy_stats.get(p.id, {}).get("strategy_count", 0),
+            strategy_total_pnl=strategy_stats.get(p.id, {}).get("strategy_total_pnl", Decimal("0")),
             created_at=p.created_at,
         )
         for p in portfolios
     ]
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return ApiResponse(
         success=True,
@@ -141,6 +166,9 @@ async def list_portfolios(
             total=total,
             page=page,
             page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
         ),
     )
 

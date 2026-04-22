@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
@@ -22,7 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { LoadingScreen } from '@/components/ui/LoadingScreen'
 import { strategiesApi, providersApi } from '@/lib/api'
-import type { StrategySummary, CreateStrategyRequest } from '@/types'
+import type { StrategySummary, CreateStrategyRequest, UpdateStrategyRequest } from '@/types'
 import {
   formatCurrency,
   cn,
@@ -43,11 +43,21 @@ import { Label } from '@/components/ui/Label'
 import { Switch } from '@/components/ui/Switch'
 import { Separator } from '@/components/ui/Separator'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/Select'
+import {
   DEFAULT_SYSTEM_PROMPT,
   DEFAULT_CUSTOM_PROMPT,
   DEFAULT_DATA_SOURCES,
   DEFAULT_TRIGGER,
   DEFAULT_FILTERS,
+  TAIL_FILTERS,
+  SPORTS_FILTERS,
+  SPORTS_TRIGGER,
   DEFAULT_ORDER,
   DEFAULT_POSITION_MONITOR,
   DEFAULT_RISK,
@@ -64,7 +74,7 @@ const tabLabels: Record<string, string> = {
   risk: '风险控制',
 }
 
-function StrategyCard({ strategy, onDelete, onStart, onStop }: { strategy: StrategySummary; onDelete: (id: string) => void; onStart: (id: string) => void; onStop: (id: string) => void }) {
+function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit }: { strategy: StrategySummary; onDelete: (id: string) => void; onStart: (id: string) => void; onStop: (id: string) => void; onEdit: (strategy: StrategySummary) => void }) {
   const pnlIsPositive = Number(strategy.total_pnl) >= 0
 
   return (
@@ -79,6 +89,7 @@ function StrategyCard({ strategy, onDelete, onStart, onStop }: { strategy: Strat
               variant="ghost"
               size="icon"
               className="h-8 w-8 opacity-0 group-hover:opacity-100"
+              onClick={() => onEdit(strategy)}
             >
               <Edit className="h-4 w-4" />
             </Button>
@@ -170,6 +181,8 @@ function StrategyCard({ strategy, onDelete, onStart, onStop }: { strategy: Strat
 
 export default function StrategiesPage() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [selectedStrategy, setSelectedStrategy] = useState<StrategySummary | null>(null)
   const [selectedTab, setSelectedTab] = useState('basic')
 
   // Basic info state
@@ -183,6 +196,7 @@ export default function StrategiesPage() {
 
   // Full config state
   const [config, setConfig] = useState({
+    template: 'generic' as 'generic' | 'tail' | 'sports',
     data_sources: DEFAULT_DATA_SOURCES,
     trigger: DEFAULT_TRIGGER,
     filters: DEFAULT_FILTERS,
@@ -195,13 +209,13 @@ export default function StrategiesPage() {
 
   const queryClient = useQueryClient()
 
-  // Fetch providers
-  const { data: providersResponse } = useQuery({
+  // Fetch providers from backend (UUID-based)
+  const { data: providersData } = useQuery({
     queryKey: ['providers'],
     queryFn: () => providersApi.getAll(),
   })
 
-  const providers = providersResponse || []
+  const providers = providersData || []
 
   const { data: strategiesResponse, isLoading } = useQuery({
     queryKey: ['strategies'],
@@ -218,6 +232,7 @@ export default function StrategiesPage() {
       setIsCreateDialogOpen(false)
       setNewStrategy({ name: '', description: '', min_order_size: 10, max_order_size: 100, provider_id: '' })
       setConfig({
+        template: 'generic',
         data_sources: DEFAULT_DATA_SOURCES,
         trigger: DEFAULT_TRIGGER,
         filters: DEFAULT_FILTERS,
@@ -228,6 +243,17 @@ export default function StrategiesPage() {
         custom_prompt: DEFAULT_CUSTOM_PROMPT,
       })
       setSelectedTab('basic')
+    },
+    onError: (error: any) => {
+      console.error('Create strategy error:', error)
+      const detail = error?.response?.data?.detail
+      let msg: string
+      if (Array.isArray(detail)) {
+        msg = detail.map((d: any) => `${d.loc?.join('.')}: ${d.msg}`).join('\n')
+      } else {
+        msg = detail || error?.message || '未知错误'
+      }
+      alert('创建失败: ' + msg)
     },
   })
 
@@ -252,11 +278,72 @@ export default function StrategiesPage() {
     },
   })
 
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdateStrategyRequest }) =>
+      strategiesApi.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['strategies'] })
+      setIsEditDialogOpen(false)
+      setSelectedStrategy(null)
+      setSelectedTab('basic')
+    },
+  })
+
+  // Handle edit button click
+  const handleEdit = (strategy: StrategySummary) => {
+    setSelectedStrategy(strategy)
+    setIsEditDialogOpen(true)
+    setSelectedTab('basic')
+  }
+
+  // Load strategy data for editing
+  const { data: editStrategyData } = useQuery({
+    queryKey: ['strategy', selectedStrategy?.id],
+    queryFn: () => strategiesApi.getById(selectedStrategy!.id),
+    enabled: !!selectedStrategy?.id && isEditDialogOpen,
+  })
+
+  // Populate form when editing
+  useEffect(() => {
+    if (editStrategyData) {
+      const strategy = editStrategyData as any // Cast to access all fields
+      setNewStrategy({
+        name: strategy.name,
+        description: strategy.description || '',
+        min_order_size: strategy.min_order_size,
+        max_order_size: strategy.max_order_size,
+        provider_id: strategy.provider_id || '',
+      })
+      setConfig({
+        template: 'generic',
+        data_sources: strategy.data_sources || DEFAULT_DATA_SOURCES,
+        trigger: strategy.trigger || DEFAULT_TRIGGER,
+        filters: strategy.filters || DEFAULT_FILTERS,
+        order: {
+          min_order_size: strategy.min_order_size,
+          max_order_size: strategy.max_order_size,
+          default_amount: (strategy as any).default_amount || 5,
+        },
+        position_monitor: strategy.position_monitor || DEFAULT_POSITION_MONITOR,
+        risk: {
+          max_positions: strategy.max_open_positions || 3,
+          min_risk_reward_ratio: (strategy as any).min_risk_reward_ratio || 2.0,
+          max_margin_usage: 0.9,
+          min_position_size: 12,
+        },
+        system_prompt: strategy.system_prompt || DEFAULT_SYSTEM_PROMPT,
+        custom_prompt: strategy.custom_prompt || DEFAULT_CUSTOM_PROMPT,
+      })
+    }
+  }, [editStrategyData])
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
     // Flatten config for backend API
-    const strategyData = {
+    const strategyData: CreateStrategyRequest = {
       ...newStrategy,
+      provider_id: newStrategy.provider_id || undefined,
+      type: 'ai' as const,
       // Data sources
       data_sources: config.data_sources,
       // Trigger
@@ -278,13 +365,36 @@ export default function StrategiesPage() {
       system_prompt: config.system_prompt,
       custom_prompt: config.custom_prompt,
     }
+    console.log('Creating strategy with data:', strategyData)
     createMutation.mutate(strategyData)
+  }
+
+  const handleUpdate = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedStrategy) return
+
+    const strategyData: UpdateStrategyRequest = {
+      name: newStrategy.name,
+      description: newStrategy.description,
+      provider_id: newStrategy.provider_id || undefined,
+      data_sources: config.data_sources,
+      trigger: config.trigger,
+      filters: config.filters,
+      position_monitor: config.position_monitor,
+      min_order_size: newStrategy.min_order_size,
+      max_order_size: newStrategy.max_order_size,
+      system_prompt: config.system_prompt,
+      custom_prompt: config.custom_prompt,
+    }
+
+    updateMutation.mutate({ id: selectedStrategy.id, data: strategyData })
   }
 
   // Reset form to defaults
   const resetForm = () => {
     setNewStrategy({ name: '', description: '', min_order_size: 10, max_order_size: 100, provider_id: '' })
     setConfig({
+      template: 'generic',
       data_sources: DEFAULT_DATA_SOURCES,
       trigger: DEFAULT_TRIGGER,
       filters: DEFAULT_FILTERS,
@@ -311,19 +421,20 @@ export default function StrategiesPage() {
             管理您的自动化交易策略并跟踪表现
           </p>
         </div>
-        <Dialog
-            open={isCreateDialogOpen}
-            onOpenChange={(open) => {
-              setIsCreateDialogOpen(open)
-              if (!open) resetForm()
-            }}
-          >
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                新建策略
-              </Button>
-            </DialogTrigger>
+        <Button onClick={() => setIsCreateDialogOpen(true)}>
+          <Plus className="mr-2 h-4 w-4" />
+          新建策略
+        </Button>
+      </div>
+
+      {/* Create Dialog */}
+      <Dialog
+          open={isCreateDialogOpen}
+          onOpenChange={(open) => {
+            setIsCreateDialogOpen(open)
+            if (!open) resetForm()
+          }}
+        >
             <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
               <DialogHeader>
                 <DialogTitle>创建新策略</DialogTitle>
@@ -368,6 +479,63 @@ export default function StrategiesPage() {
                   {/* Basic Tab */}
                   {selectedTab === 'basic' && (
                     <div className="space-y-4">
+                      {/* 策略模板选择 */}
+                      <div className="space-y-2">
+                        <Label>策略模板</Label>
+                        <Select
+                          value={config.template || 'generic'}
+                          onValueChange={(value) => {
+                            const templates = {
+                              generic: () => ({
+                                filters: DEFAULT_FILTERS,
+                                trigger: DEFAULT_TRIGGER,
+                              }),
+                              tail: () => ({
+                                filters: TAIL_FILTERS,
+                                trigger: DEFAULT_TRIGGER,
+                              }),
+                              sports: () => ({
+                                filters: SPORTS_FILTERS,
+                                trigger: SPORTS_TRIGGER,
+                              }),
+                            }
+                            const template = templates[value as keyof typeof templates]()
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              template: value,
+                              filters: template.filters,
+                              trigger: template.trigger,
+                            }))
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="选择策略模板" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="generic">
+                              <div>
+                                <div className="font-medium">通用策略</div>
+                                <div className="text-xs text-muted-foreground">适用于大多数市场</div>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="tail">
+                              <div>
+                                <div className="font-medium">尾盘策略</div>
+                                <div className="text-xs text-muted-foreground">到期前 2 小时，高概率</div>
+                              </div>
+                            </SelectItem>
+                            <SelectItem value="sports">
+                              <div>
+                                <div className="font-medium">Sports 策略</div>
+                                <div className="text-xs text-muted-foreground">体育赛事，监控比分</div>
+                              </div>
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <Separator />
+
                       <div className="space-y-2">
                         <Label htmlFor="name">策略名称</Label>
                         <Input
@@ -442,7 +610,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.data_sources.enable_market_data}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               data_sources: { ...prev.data_sources, enable_market_data: checked },
                             }))
@@ -458,7 +626,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.data_sources.enable_activity}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               data_sources: { ...prev.data_sources, enable_activity: checked },
                             }))
@@ -474,7 +642,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.data_sources.enable_sports_score}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               data_sources: { ...prev.data_sources, enable_sports_score: checked },
                             }))
@@ -495,7 +663,7 @@ export default function StrategiesPage() {
                           step="0.1"
                           value={config.trigger.price_change_threshold}
                           onChange={(e) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               trigger: { ...prev.trigger, price_change_threshold: Number(e.target.value) },
                             }))
@@ -510,7 +678,7 @@ export default function StrategiesPage() {
                           type="number"
                           value={config.trigger.activity_netflow_threshold}
                           onChange={(e) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               trigger: { ...prev.trigger, activity_netflow_threshold: Number(e.target.value) },
                             }))
@@ -526,7 +694,7 @@ export default function StrategiesPage() {
                             type="number"
                             value={config.trigger.min_trigger_interval}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 trigger: { ...prev.trigger, min_trigger_interval: Number(e.target.value) },
                               }))
@@ -540,7 +708,7 @@ export default function StrategiesPage() {
                             type="number"
                             value={config.trigger.scan_interval}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 trigger: { ...prev.trigger, scan_interval: Number(e.target.value) },
                               }))
@@ -564,7 +732,7 @@ export default function StrategiesPage() {
                             max="100"
                             value={config.filters.min_confidence}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 filters: { ...prev.filters, min_confidence: Number(e.target.value) },
                               }))
@@ -579,7 +747,7 @@ export default function StrategiesPage() {
                             step="0.1"
                             value={config.filters.max_spread}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 filters: { ...prev.filters, max_spread: Number(e.target.value) },
                               }))
@@ -596,7 +764,7 @@ export default function StrategiesPage() {
                             step="0.01"
                             value={config.filters.min_price}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 filters: { ...prev.filters, min_price: Number(e.target.value) },
                               }))
@@ -611,7 +779,7 @@ export default function StrategiesPage() {
                             step="0.01"
                             value={config.filters.max_price}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 filters: { ...prev.filters, max_price: Number(e.target.value) },
                               }))
@@ -627,7 +795,7 @@ export default function StrategiesPage() {
                             id="dead_zone_enabled"
                             checked={config.filters.dead_zone_enabled}
                             onCheckedChange={(checked) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 filters: { ...prev.filters, dead_zone_enabled: checked },
                               }))
@@ -644,7 +812,7 @@ export default function StrategiesPage() {
                                 step="0.01"
                                 value={config.filters.dead_zone_min}
                                 onChange={(e) =>
-                                  setConfig((prev) => ({
+                                  setConfig((prev: any) => ({
                                     ...prev,
                                     filters: { ...prev.filters, dead_zone_min: Number(e.target.value) },
                                   }))
@@ -659,7 +827,7 @@ export default function StrategiesPage() {
                                 step="0.01"
                                 value={config.filters.dead_zone_max}
                                 onChange={(e) =>
-                                  setConfig((prev) => ({
+                                  setConfig((prev: any) => ({
                                     ...prev,
                                     filters: { ...prev.filters, dead_zone_max: Number(e.target.value) },
                                   }))
@@ -682,13 +850,13 @@ export default function StrategiesPage() {
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                           value={newStrategy.provider_id || ''}
                           onChange={(e) =>
-                            setNewStrategy((prev) => ({ ...prev, provider_id: e.target.value }))
+                            setNewStrategy((prev) => ({ ...prev, provider_id: e.target.value || undefined }))
                           }
                         >
                           <option value="">选择 Provider...</option>
-                          {providers.map((provider) => (
+                          {providers.map((provider: any) => (
                             <option key={provider.id} value={provider.id}>
-                              {provider.name} ({provider.type})
+                              {provider.name} ({provider.provider_type || provider.provider})
                             </option>
                           ))}
                         </select>
@@ -700,7 +868,7 @@ export default function StrategiesPage() {
                           className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                           value={config.system_prompt}
                           onChange={(e) =>
-                            setConfig((prev) => ({ ...prev, system_prompt: e.target.value }))
+                            setConfig((prev: any) => ({ ...prev, system_prompt: e.target.value }))
                           }
                           placeholder="输入系统提示词..."
                         />
@@ -712,7 +880,7 @@ export default function StrategiesPage() {
                           className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                           value={config.custom_prompt}
                           onChange={(e) =>
-                            setConfig((prev) => ({ ...prev, custom_prompt: e.target.value }))
+                            setConfig((prev: any) => ({ ...prev, custom_prompt: e.target.value }))
                           }
                           placeholder="输入自定义提示词模板..."
                         />
@@ -734,7 +902,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.position_monitor.enable_stop_loss}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               position_monitor: { ...prev.position_monitor, enable_stop_loss: checked },
                             }))
@@ -750,7 +918,7 @@ export default function StrategiesPage() {
                             step="0.1"
                             value={config.position_monitor.stop_loss_percent}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 position_monitor: { ...prev.position_monitor, stop_loss_percent: Number(e.target.value) },
                               }))
@@ -767,7 +935,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.position_monitor.enable_take_profit}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               position_monitor: { ...prev.position_monitor, enable_take_profit: checked },
                             }))
@@ -783,7 +951,7 @@ export default function StrategiesPage() {
                             step="0.001"
                             value={config.position_monitor.take_profit_price}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 position_monitor: { ...prev.position_monitor, take_profit_price: Number(e.target.value) },
                               }))
@@ -800,7 +968,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.position_monitor.enable_trailing_stop}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               position_monitor: { ...prev.position_monitor, enable_trailing_stop: checked },
                             }))
@@ -816,7 +984,7 @@ export default function StrategiesPage() {
                             step="0.1"
                             value={config.position_monitor.trailing_stop_percent}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 position_monitor: { ...prev.position_monitor, trailing_stop_percent: Number(e.target.value) },
                               }))
@@ -833,7 +1001,7 @@ export default function StrategiesPage() {
                         <Switch
                           checked={config.position_monitor.enable_auto_redeem}
                           onCheckedChange={(checked) =>
-                            setConfig((prev) => ({
+                            setConfig((prev: any) => ({
                               ...prev,
                               position_monitor: { ...prev.position_monitor, enable_auto_redeem: checked },
                             }))
@@ -854,7 +1022,7 @@ export default function StrategiesPage() {
                             type="number"
                             value={config.risk.max_positions}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 risk: { ...prev.risk, max_positions: Number(e.target.value) },
                               }))
@@ -869,7 +1037,7 @@ export default function StrategiesPage() {
                             step="0.1"
                             value={config.risk.min_risk_reward_ratio}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 risk: { ...prev.risk, min_risk_reward_ratio: Number(e.target.value) },
                               }))
@@ -887,7 +1055,7 @@ export default function StrategiesPage() {
                             max="1"
                             value={config.risk.max_margin_usage}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 risk: { ...prev.risk, max_margin_usage: Number(e.target.value) },
                               }))
@@ -901,7 +1069,7 @@ export default function StrategiesPage() {
                             type="number"
                             value={config.risk.min_position_size}
                             onChange={(e) =>
-                              setConfig((prev) => ({
+                              setConfig((prev: any) => ({
                                 ...prev,
                                 risk: { ...prev.risk, min_position_size: Number(e.target.value) },
                               }))
@@ -926,13 +1094,522 @@ export default function StrategiesPage() {
                 >
                   取消
                 </Button>
-                <Button type="submit" isLoading={createMutation.isPending}>
+                <Button type="submit" isLoading={createMutation.isPending} onClick={handleCreate}>
                   创建
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
-      </div>
+
+          {/* Edit Dialog */}
+          <Dialog
+            open={isEditDialogOpen}
+            onOpenChange={(open) => {
+              setIsEditDialogOpen(open)
+              if (!open) {
+                setSelectedStrategy(null)
+                resetForm()
+              }
+            }}
+          >
+            <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+              <DialogHeader>
+                <DialogTitle>编辑策略</DialogTitle>
+                <DialogDescription>
+                  修改策略配置
+                </DialogDescription>
+              </DialogHeader>
+
+              {/* Tab Navigation */}
+              <div className="flex border-b mb-4 overflow-x-auto">
+                {Object.entries(tabLabels).map(([key, label]) => {
+                  const iconMap: Record<string, React.ReactNode> = {
+                    basic: <Settings className="h-4 w-4 mr-2" />,
+                    data: <Database className="h-4 w-4 mr-2" />,
+                    trigger: <Zap className="h-4 w-4 mr-2" />,
+                    filters: <Filter className="h-4 w-4 mr-2" />,
+                    ai: <Bot className="h-4 w-4 mr-2" />,
+                    monitor: <Monitor className="h-4 w-4 mr-2" />,
+                    risk: <Shield className="h-4 w-4 mr-2" />,
+                  }
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setSelectedTab(key)}
+                      className={cn(
+                        'flex items-center px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap',
+                        selectedTab === key
+                          ? 'border-emerald-500 text-emerald-600'
+                          : 'border-transparent text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {iconMap[key]}
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Tab Content */}
+              <div className="flex-1 overflow-y-auto min-h-[300px] max-h-[500px]">
+                <form onSubmit={handleUpdate} className="space-y-4">
+                  {/* Basic Tab */}
+                  {selectedTab === 'basic' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-name">策略名称</Label>
+                        <Input
+                          id="edit-name"
+                          placeholder="我的策略"
+                          value={newStrategy.name}
+                          onChange={(e) =>
+                            setNewStrategy((prev) => ({ ...prev, name: e.target.value }))
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-description">描述（可选）</Label>
+                        <Input
+                          id="edit-description"
+                          placeholder="描述"
+                          value={newStrategy.description}
+                          onChange={(e) =>
+                            setNewStrategy((prev) => ({
+                              ...prev,
+                              description: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-min_order_size">最小下单金额</Label>
+                          <Input
+                            id="edit-min_order_size"
+                            type="number"
+                            placeholder="10"
+                            value={newStrategy.min_order_size}
+                            onChange={(e) =>
+                              setNewStrategy((prev) => ({
+                                ...prev,
+                                min_order_size: Number(e.target.value),
+                              }))
+                            }
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-max_order_size">最大下单金额</Label>
+                          <Input
+                            id="edit-max_order_size"
+                            type="number"
+                            placeholder="100"
+                            value={newStrategy.max_order_size}
+                            onChange={(e) =>
+                              setNewStrategy((prev) => ({
+                                ...prev,
+                                max_order_size: Number(e.target.value),
+                              }))
+                            }
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Data Sources Tab - reuse same content as create */}
+                  {selectedTab === 'data' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>市场数据</Label>
+                          <p className="text-xs text-muted-foreground">实时价格监控</p>
+                        </div>
+                        <Switch
+                          checked={config.data_sources.enable_market_data}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              data_sources: { ...prev.data_sources, enable_market_data: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>Activity 流入</Label>
+                          <p className="text-xs text-muted-foreground">交易活动监控</p>
+                        </div>
+                        <Switch
+                          checked={config.data_sources.enable_activity}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              data_sources: { ...prev.data_sources, enable_activity: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>Sports 比分</Label>
+                          <p className="text-xs text-muted-foreground">体育赛事比分监控</p>
+                        </div>
+                        <Switch
+                          checked={config.data_sources.enable_sports_score}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              data_sources: { ...prev.data_sources, enable_sports_score: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Trigger Tab */}
+                  {selectedTab === 'trigger' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-price_change_threshold">价格变动阈值 (%)</Label>
+                        <Input
+                          id="edit-price_change_threshold"
+                          type="number"
+                          step="0.1"
+                          value={config.trigger.price_change_threshold}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              trigger: { ...prev.trigger, price_change_threshold: Number(e.target.value) },
+                            }))
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground">价格变动超过此阈值时触发扫描</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-activity_netflow_threshold">Activity 净流入阈值</Label>
+                        <Input
+                          id="edit-activity_netflow_threshold"
+                          type="number"
+                          value={config.trigger.activity_netflow_threshold}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              trigger: { ...prev.trigger, activity_netflow_threshold: Number(e.target.value) },
+                            }))
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground">净流入超过此阈值时触发</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-min_trigger_interval">最小触发间隔 (分钟)</Label>
+                          <Input
+                            id="edit-min_trigger_interval"
+                            type="number"
+                            value={config.trigger.min_trigger_interval}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                trigger: { ...prev.trigger, min_trigger_interval: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-scan_interval">扫描间隔 (秒)</Label>
+                          <Input
+                            id="edit-scan_interval"
+                            type="number"
+                            value={config.trigger.scan_interval}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                trigger: { ...prev.trigger, scan_interval: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Filters Tab */}
+                  {selectedTab === 'filters' && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-min_price">最小价格</Label>
+                          <Input
+                            id="edit-min_price"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="1"
+                            value={config.filters.min_price}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, min_price: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-max_price">最大价格</Label>
+                          <Input
+                            id="edit-max_price"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="1"
+                            value={config.filters.max_price}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, max_price: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>死区过滤</Label>
+                          <p className="text-xs text-muted-foreground">0.70-0.80 价格区间不交易</p>
+                        </div>
+                        <Switch
+                          checked={config.filters.dead_zone_enabled}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              filters: { ...prev.filters, dead_zone_enabled: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                      {config.filters.dead_zone_enabled && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-dead_zone_min">死区最小值</Label>
+                            <Input
+                              id="edit-dead_zone_min"
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="1"
+                              value={config.filters.dead_zone_min}
+                              onChange={(e) =>
+                                setConfig((prev: any) => ({
+                                  ...prev,
+                                  filters: { ...prev.filters, dead_zone_min: Number(e.target.value) },
+                                }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="edit-dead_zone_max">死区最大值</Label>
+                            <Input
+                              id="edit-dead_zone_max"
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="1"
+                              value={config.filters.dead_zone_max}
+                              onChange={(e) =>
+                                setConfig((prev: any) => ({
+                                  ...prev,
+                                  filters: { ...prev.filters, dead_zone_max: Number(e.target.value) },
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <Separator />
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-max_hours_to_expiry">最大到期时间 (小时)</Label>
+                        <Input
+                          id="edit-max_hours_to_expiry"
+                          type="number"
+                          value={config.filters.max_hours_to_expiry}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              filters: { ...prev.filters, max_hours_to_expiry: Number(e.target.value) },
+                            }))
+                          }
+                        />
+                        <p className="text-xs text-muted-foreground">超过此小时数的市场不交易</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* AI Tab */}
+                  {selectedTab === 'ai' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-system_prompt">System Prompt</Label>
+                        <textarea
+                          id="edit-system_prompt"
+                          className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          placeholder="输入 System Prompt..."
+                          value={config.system_prompt}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              system_prompt: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-custom_prompt">Custom Prompt 模板</Label>
+                        <textarea
+                          id="edit-custom_prompt"
+                          className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          placeholder="输入自定义提示词模板..."
+                          value={config.custom_prompt}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              custom_prompt: e.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Monitor Tab */}
+                  {selectedTab === 'monitor' && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>止损</Label>
+                          <p className="text-xs text-muted-foreground">亏损达到百分比自动平仓</p>
+                        </div>
+                        <Switch
+                          checked={config.position_monitor.enable_stop_loss}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              position_monitor: { ...prev.position_monitor, enable_stop_loss: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>止盈</Label>
+                          <p className="text-xs text-muted-foreground">达到目标价格自动平仓</p>
+                        </div>
+                        <Switch
+                          checked={config.position_monitor.enable_take_profit}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              position_monitor: { ...prev.position_monitor, enable_take_profit: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>追踪止损</Label>
+                          <p className="text-xs text-muted-foreground">随价格移动调整止损</p>
+                        </div>
+                        <Switch
+                          checked={config.position_monitor.enable_trailing_stop}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              position_monitor: { ...prev.position_monitor, enable_trailing_stop: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                      <Separator />
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label>自动赎回</Label>
+                          <p className="text-xs text-muted-foreground">市场到期自动赎回</p>
+                        </div>
+                        <Switch
+                          checked={config.position_monitor.enable_auto_redeem}
+                          onCheckedChange={(checked) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              position_monitor: { ...prev.position_monitor, enable_auto_redeem: checked },
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Risk Tab */}
+                  {selectedTab === 'risk' && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-max_positions">最大持仓数</Label>
+                        <Input
+                          id="edit-max_positions"
+                          type="number"
+                          value={config.risk.max_positions}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              risk: { ...prev.risk, max_positions: Number(e.target.value) },
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-min_risk_reward_ratio">最小盈亏比</Label>
+                        <Input
+                          id="edit-min_risk_reward_ratio"
+                          type="number"
+                          step="0.1"
+                          value={config.risk.min_risk_reward_ratio}
+                          onChange={(e) =>
+                            setConfig((prev: any) => ({
+                              ...prev,
+                              risk: { ...prev.risk, min_risk_reward_ratio: Number(e.target.value) },
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </form>
+              </div>
+
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsEditDialogOpen(false)
+                    setSelectedStrategy(null)
+                    resetForm()
+                  }}
+                >
+                  取消
+                </Button>
+                <Button type="submit" isLoading={updateMutation.isPending} onClick={handleUpdate}>
+                  保存
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
       {/* Strategies Grid */}
       {strategies && strategies.length > 0 ? (
@@ -944,6 +1621,7 @@ export default function StrategiesPage() {
               onDelete={(id) => deleteMutation.mutate(id)}
               onStart={(id) => startMutation.mutate(id)}
               onStop={(id) => stopMutation.mutate(id)}
+              onEdit={handleEdit}
             />
           ))}
         </div>

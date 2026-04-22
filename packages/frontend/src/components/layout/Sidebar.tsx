@@ -8,6 +8,8 @@ import {
   Wallet,
   Brain,
   ChevronRight,
+  Zap,
+  Plug,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth'
@@ -49,6 +51,16 @@ const navItems: NavItem[] = [
     label: '策略',
     icon: Brain,
     href: '/strategies',
+  },
+  {
+    label: '信号',
+    icon: Zap,
+    href: '/signals',
+  },
+  {
+    label: 'AI Provider',
+    icon: Plug,
+    href: '/providers',
   },
   {
     label: '钱包',

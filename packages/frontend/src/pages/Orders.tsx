@@ -81,9 +81,9 @@ export default function OrdersPage() {
       {/* Page Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Orders</h1>
+          <h1 className="text-2xl font-bold tracking-tight">订单</h1>
           <p className="text-muted-foreground">
-            View and manage your trading orders
+            查看和管理您的交易订单
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -101,7 +101,7 @@ export default function OrdersPage() {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search orders by symbol or ID..."
+                placeholder="按交易对或ID搜索订单..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
@@ -242,7 +242,7 @@ export default function OrdersPage() {
             </Table>
           ) : (
             <div className="flex flex-col items-center justify-center py-12">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                 <ListOrdered className="h-6 w-6 text-muted-foreground" />
               </div>
               <h3 className="mt-4 text-lg font-semibold">No orders found</h3>

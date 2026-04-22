@@ -65,15 +65,15 @@ export default function PositionsPage() {
       {/* Page Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Positions</h1>
+          <h1 className="text-2xl font-bold tracking-tight">持仓</h1>
           <p className="text-muted-foreground">
-            View and manage your active trading positions
+            查看和管理您的活跃持仓
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline">
             <Filter className="mr-2 h-4 w-4" />
-            Filter
+            筛选
           </Button>
         </div>
       </div>
@@ -83,7 +83,7 @@ export default function PositionsPage() {
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search positions by symbol or portfolio..."
+            placeholder="按交易对或组合搜索..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10"
@@ -103,7 +103,7 @@ export default function PositionsPage() {
             }}
           >
             <ArrowUpDown className="mr-2 h-3 w-3" />
-            Value
+            价值
           </Button>
           <Button
             variant={sortBy === 'pnl' ? 'default' : 'outline'}
@@ -118,7 +118,7 @@ export default function PositionsPage() {
             }}
           >
             <ArrowUpDown className="mr-2 h-3 w-3" />
-            P&L
+            盈亏
           </Button>
         </div>
       </div>
@@ -126,21 +126,21 @@ export default function PositionsPage() {
       {/* Positions Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Active Positions</CardTitle>
+          <CardTitle>活跃持仓</CardTitle>
         </CardHeader>
         <CardContent>
           {sortedPositions && sortedPositions.length > 0 ? (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Symbol</TableHead>
-                  <TableHead>Portfolio</TableHead>
-                  <TableHead>Side</TableHead>
-                  <TableHead className="text-right">Quantity</TableHead>
-                  <TableHead className="text-right">Avg Cost</TableHead>
-                  <TableHead className="text-right">Current</TableHead>
-                  <TableHead className="text-right">Market Value</TableHead>
-                  <TableHead className="text-right">P&L</TableHead>
+                  <TableHead>交易对</TableHead>
+                  <TableHead>组合</TableHead>
+                  <TableHead>方向</TableHead>
+                  <TableHead className="text-right">数量</TableHead>
+                  <TableHead className="text-right">均价</TableHead>
+                  <TableHead className="text-right">当前价</TableHead>
+                  <TableHead className="text-right">市值</TableHead>
+                  <TableHead className="text-right">盈亏</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
@@ -200,7 +200,7 @@ export default function PositionsPage() {
             </Table>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
                 <Briefcase className="h-6 w-6 text-muted-foreground" />
               </div>
               <h3 className="mt-4 text-lg font-semibold">No positions yet</h3>

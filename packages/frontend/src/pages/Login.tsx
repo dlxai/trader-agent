@@ -105,7 +105,7 @@ export default function LoginPage() {
         </div>
 
         {/* Login Form */}
-        <div className="rounded-2xl border border-void-300 bg-void-50 p-8">
+        <div className="rounded-2xl border border-border bg-muted/50 p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
               <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-500">

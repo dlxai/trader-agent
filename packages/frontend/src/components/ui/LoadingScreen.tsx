@@ -14,7 +14,7 @@ export function LoadingScreen({ className, message = 'Loading...' }: LoadingScre
       )}
     >
       <div className="relative h-12 w-12">
-        <div className="absolute inset-0 rounded-full border-2 border-void-300" />
+        <div className="absolute inset-0 rounded-full border-2 border-border" />
         <div className="absolute inset-0 rounded-full border-2 border-t-emerald-500 border-r-transparent border-b-transparent border-l-transparent animate-spin" />
       </div>
       <p className="text-sm text-muted-foreground">{message}</p>
@@ -46,7 +46,7 @@ export function LoadingSpinner({ className, size = 'md' }: { className?: string;
 export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('animate-pulse rounded-md bg-void-200', className)}
+      className={cn('animate-pulse rounded-md bg-muted', className)}
       {...props}
     />
   )

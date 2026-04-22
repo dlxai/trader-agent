@@ -113,6 +113,8 @@ class PortfolioSummaryResponse(BaseSchema):
     total_pnl: Decimal
     total_pnl_percent: Decimal
     total_trades: int
+    strategy_count: int = 0
+    strategy_total_pnl: Decimal = Decimal("0")
     created_at: datetime
 
 

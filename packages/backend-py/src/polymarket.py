@@ -1,10 +1,18 @@
 """Polymarket client wrapper for backend."""
 
+import sys
+from pathlib import Path
 from typing import Optional
+
+# Add strategy-py source to path
+# packages/backend-py/src/polymarket.py -> packages/strategy-py/src
+_STRATEGY_PY_SRC = Path(__file__).resolve().parent.parent.parent / "strategy-py" / "src"
+if str(_STRATEGY_PY_SRC) not in sys.path:
+    sys.path.insert(0, str(_STRATEGY_PY_SRC))
 
 # Import from strategy-py package if available
 try:
-    from strategy_py.src.polymarket.client import PolymarketClient, create_client
+    from polymarket.client import PolymarketClient, create_client
     POLYMARKET_CLIENT_AVAILABLE = True
 except ImportError:
     POLYMARKET_CLIENT_AVAILABLE = False

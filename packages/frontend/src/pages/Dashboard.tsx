@@ -39,7 +39,7 @@ function StatCard({
       </CardHeader>
       <CardContent>
         {isLoading ? (
-          <div className="h-8 w-24 animate-pulse rounded bg-void-200" />
+          <div className="h-8 w-24 animate-pulse rounded bg-muted" />
         ) : (
           <div className="text-2xl font-bold font-mono">{value}</div>
         )}
@@ -66,10 +66,10 @@ function RecentActivity() {
       <div className="space-y-3">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="flex items-center gap-3">
-            <div className="h-8 w-8 animate-pulse rounded-full bg-void-200" />
+            <div className="h-8 w-8 animate-pulse rounded-full bg-muted" />
             <div className="flex-1 space-y-1">
-              <div className="h-4 w-32 animate-pulse rounded bg-void-200" />
-              <div className="h-3 w-20 animate-pulse rounded bg-void-200" />
+              <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+              <div className="h-3 w-20 animate-pulse rounded bg-muted" />
             </div>
           </div>
         ))}
@@ -118,7 +118,7 @@ function RecentActivity() {
   if (activities.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-center">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
           <ListOrdered className="h-6 w-6 text-muted-foreground" />
         </div>
         <h3 className="mt-4 text-lg font-semibold">暂无活动</h3>
@@ -134,7 +134,7 @@ function RecentActivity() {
       {activities.slice(0, 10).map((activity) => (
         <div
           key={activity.id}
-          className="flex items-center gap-3 rounded-lg border border-void-300 bg-void-100 p-3"
+          className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 p-3"
         >
           <div
             className={cn(

@@ -158,24 +158,35 @@ class PolymarketDataSource(DataSource):
                 await self._price_monitor.unsubscribe_token(token_id)
             self._subscribed_tokens.discard(token_id)
 
-    async def get_market_data(self, token_id: str) -> Optional[MarketData]:
-        """Get market data from price monitor (WebSocket优先，HTTP fallback)"""
+    async def get_market_data(self, token_id: str, fallback_timeout: int = 10) -> Optional[MarketData]:
+        """Get market data from price monitor (WebSocket优先，HTTP fallback)
+
+        Args:
+            token_id: 市场 token ID
+            fallback_timeout: WebSocket 无数据超时时间（秒），超过则用 HTTP
+        """
         # 1. 尝试从 WebSocket 获取
         if self._price_monitor:
             price_update = self._price_monitor.get_current_price(token_id)
-            if price_update:
-                return MarketData(
-                    market_id=token_id,
-                    token_id=token_id,
-                    yes_price=price_update.yes_price,
-                    no_price=price_update.no_price,
-                    change_24h=0,
-                    volume=price_update.volume or 0,
-                    hours_to_expiry=0,
-                    timestamp=price_update.timestamp or datetime.utcnow()
-                )
 
-        # 2. HTTP fallback (如果 WebSocket 不可用)
+            if price_update:
+                # 检查数据是否在超时时间内
+                age = (datetime.utcnow() - (price_update.timestamp or datetime.utcnow())).total_seconds()
+                if age <= fallback_timeout:
+                    # WebSocket 数据新鲜，使用它
+                    return MarketData(
+                        market_id=token_id,
+                        token_id=token_id,
+                        yes_price=price_update.yes_price,
+                        no_price=price_update.no_price,
+                        change_24h=0,
+                        volume=price_update.volume or 0,
+                        hours_to_expiry=0,
+                        timestamp=price_update.timestamp or datetime.utcnow()
+                    )
+                # else: WebSocket 数据太旧，用 HTTP fallback
+
+        # 2. HTTP fallback (WebSocket 无数据或超时)
         return await self._fetch_price_http(token_id)
 
     async def _fetch_price_http(self, token_id: str) -> Optional[MarketData]:

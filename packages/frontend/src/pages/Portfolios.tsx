@@ -241,7 +241,7 @@ export default function PortfoliosPage() {
       ) : (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-void-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
               <Briefcase className="h-6 w-6 text-muted-foreground" />
             </div>
             <h3 className="mt-4 text-lg font-semibold">暂无投资组合</h3>

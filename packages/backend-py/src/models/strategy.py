@@ -147,6 +147,24 @@ class Strategy(Base, TimestampMixin):
     parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON parameters
     strategy_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # JSON metadata
 
+    # Extended config (from frontend)
+    trigger: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 触发条件
+    filters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 信号过滤
+    order: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 下单配置
+    position_monitor: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 持仓监控
+    risk: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)  # 风险控制
+
+    # Additional risk settings
+    max_positions: Mapped[int] = mapped_column(Integer, default=3)
+    default_amount: Mapped[Decimal] = mapped_column(Numeric(19, 8), default=Decimal("5"))
+    min_risk_reward_ratio: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("2.0"))
+
+    # Stop loss / Take profit enabled flags
+    enable_stop_loss: Mapped[bool] = mapped_column(default=True)
+    enable_take_profit: Mapped[bool] = mapped_column(default=True)
+    enable_trailing_stop: Mapped[bool] = mapped_column(default=True)
+    enable_auto_redeem: Mapped[bool] = mapped_column(default=True)
+
     # Version control
     version: Mapped[int] = mapped_column(Integer, default=1)
     parent_strategy_id: Mapped[Optional[UUID]] = mapped_column(

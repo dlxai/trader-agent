@@ -25,6 +25,10 @@ import type {
   CreateWalletRequest,
   UpdateWalletRequest,
   WalletTestResult,
+  Strategy,
+  StrategySummary,
+  CreateStrategyRequest,
+  UpdateStrategyRequest,
 } from '@/types'
 
 // API base URL
@@ -208,6 +212,8 @@ export interface PortfolioSummary {
   total_pnl: number
   total_pnl_percent: number
   total_trades: number
+  strategy_count: number
+  strategy_total_pnl: number
   created_at: string
 }
 
@@ -459,12 +465,12 @@ export const walletsApi = {
 // Settings API (uses /api/users/me/preferences)
 export const settingsApi = {
   async getSettings(): Promise<UserSettings> {
-    const response = await apiClient.get<ApiResponse<UserSettings>>('/settings')
+    const response = await apiClient.get<ApiResponse<UserSettings>>('/users/me/preferences')
     return response.data.data
   },
 
   async updateSettings(settings: Partial<UserSettings>): Promise<UserSettings> {
-    const response = await apiClient.patch<ApiResponse<UserSettings>>('/settings', settings)
+    const response = await apiClient.put<ApiResponse<UserSettings>>('/users/me/preferences', settings)
     return response.data.data
   },
 
@@ -496,6 +502,143 @@ export const settingsApi = {
 
   async revokeApiKey(id: string): Promise<void> {
     await apiClient.delete(`/settings/api-keys/${id}`)
+  },
+
+  // Telegram 配置
+  async getTelegramConfig(): Promise<{
+    is_configured: boolean;
+    bot_token_masked?: string;
+    chat_id?: string;
+  }> {
+    const response = await apiClient.get<ApiResponse<{
+      is_configured: boolean;
+      bot_token_masked?: string;
+      chat_id?: string;
+    }>>('/users/me/telegram')
+    return response.data.data
+  },
+
+  async configureTelegram(botToken: string, chatId: string): Promise<{
+    is_configured: boolean;
+    bot_token_masked?: string;
+    chat_id?: string;
+  }> {
+    const response = await apiClient.post<ApiResponse<{
+      is_configured: boolean;
+      bot_token_masked?: string;
+      chat_id?: string;
+    }>>('/users/me/telegram', {
+      bot_token: botToken,
+      chat_id: chatId,
+    })
+    return response.data.data
+  },
+
+  async deleteTelegramConfig(): Promise<void> {
+    await apiClient.delete('/users/me/telegram')
+  },
+}
+
+// Export token management
+// Strategies API
+export const strategiesApi = {
+  async getAll(params?: { page?: number; pageSize?: number; portfolioId?: string }): Promise<{
+    items: StrategySummary[];
+    total: number;
+    page: number;
+    page_size: number;
+  }> {
+    const response = await apiClient.get<ApiResponse<{
+      items: StrategySummary[];
+      total: number;
+      page: number;
+      page_size: number;
+    }>>('/strategies', { params })
+    return response.data.data
+  },
+
+  async getById(id: string): Promise<Strategy> {
+    const response = await apiClient.get<ApiResponse<Strategy>>(`/strategies/${id}`)
+    return response.data.data
+  },
+
+  async create(data: CreateStrategyRequest): Promise<Strategy> {
+    const response = await apiClient.post<ApiResponse<Strategy>>('/strategies', data)
+    return response.data.data
+  },
+
+  async update(id: string, data: UpdateStrategyRequest): Promise<Strategy> {
+    const response = await apiClient.put<ApiResponse<Strategy>>(`/strategies/${id}`, data)
+    return response.data.data
+  },
+
+  async delete(id: string): Promise<void> {
+    await apiClient.delete(`/strategies/${id}`)
+  },
+
+  async start(id: string): Promise<Strategy> {
+    const response = await apiClient.post<ApiResponse<Strategy>>(`/strategies/${id}/start`)
+    return response.data.data
+  },
+
+  async stop(id: string): Promise<Strategy> {
+    const response = await apiClient.post<ApiResponse<Strategy>>(`/strategies/${id}/stop`)
+    return response.data.data
+  },
+
+  async runOnce(id: string): Promise<{ message: string }> {
+    const response = await apiClient.post<ApiResponse<{ message: string }>>(`/strategies/${id}/run-once`)
+    return response.data.data
+  },
+}
+
+// Signals API
+export interface SignalLogSummary {
+  id: string;
+  signal_id: string;
+  signal_type: 'buy' | 'sell' | 'hold' | 'close';
+  status: string;
+  side: string;
+  confidence: number;
+  size?: number;
+  market_id?: string;
+  symbol?: string;
+  ai_thinking?: string;
+  ai_model?: string;
+  ai_tokens_used?: number;
+  ai_duration_ms?: number;
+  signal_reason?: string;
+  created_at: string;
+}
+
+export interface SignalListResponse {
+  items: SignalLogSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export const signalsApi = {
+  async getAll(params?: {
+    page?: number;
+    pageSize?: number;
+    strategyId?: string;
+    status?: string;
+  }): Promise<SignalListResponse> {
+    const response = await apiClient.get<ApiResponse<SignalListResponse>>('/signals', { params })
+    return response.data.data
+  },
+
+  async getById(id: string): Promise<SignalLogSummary> {
+    const response = await apiClient.get<ApiResponse<SignalLogSummary>>(`/signals/${id}`)
+    return response.data.data
+  },
+
+  async getByStrategy(strategyId: string, params?: { page?: number; pageSize?: number }): Promise<SignalListResponse> {
+    const response = await apiClient.get<ApiResponse<SignalListResponse>>(`/signals`, {
+      params: { ...params, strategyId }
+    })
+    return response.data.data
   },
 }
 

@@ -1,18 +1,14 @@
 """Strategy runner service for scheduled execution."""
 
 import asyncio
-import sys
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-sys.path.insert(0, "/d/wework/polymarket-agent")
-from polymarket_sdk.sdk import PolymarketSDK
-from polymarket_sdk.services.trading_service import Side
 
 from src.database import AsyncSessionLocal
 from src.models.strategy import Strategy
@@ -21,7 +17,8 @@ from src.models.wallet import Wallet
 from src.models.signal_log import SignalLog
 from src.models.order import Order
 from src.models.provider import Provider
-from src.services.data_source_manager import get_data_source_manager, DataSource
+from src.services.data_source_manager import get_data_source_manager, DataSource, SignalFilter, TriggerChecker
+from src.core.crypto import decrypt_private_key
 
 
 class StrategyRunner:
@@ -31,20 +28,12 @@ class StrategyRunner:
         self._running = False
         self._tasks: dict[UUID, asyncio.Task] = {}
         self._data_source_manager = get_data_source_manager()
-        self.sdk: Optional[PolymarketSDK] = None
+        self.clob_client: Optional["ClobClient"] = None  # py-clob-client v2
 
     async def start_strategy(self, strategy_id: UUID) -> None:
         """Start running a strategy."""
         if strategy_id in self._tasks:
             return  # Already running
-
-        # Initialize SDK if not already done
-        if not self.sdk:
-            try:
-                self.sdk = await PolymarketSDK.create()
-            except Exception as e:
-                print(f"Failed to initialize Polymarket SDK: {e}")
-                raise
 
         # Get strategy and portfolio info from database
         async with AsyncSessionLocal() as db:
@@ -54,6 +43,43 @@ class StrategyRunner:
             strategy = result.scalar_one_or_none()
             if not strategy or not strategy.portfolio_id:
                 raise ValueError("Strategy not found or no portfolio")
+
+            # Initialize ClobClient v2 if not already done
+            if not self.clob_client:
+                wallet_result = await db.execute(
+                    select(Wallet)
+                    .where(Wallet.user_id == strategy.user_id, Wallet.is_default == True)
+                    .limit(1)
+                )
+                wallet = wallet_result.scalar_one_or_none()
+                private_key = (
+                    decrypt_private_key(wallet.private_key_encrypted)
+                    if wallet and wallet.private_key_encrypted
+                    else None
+                )
+                proxy = wallet.proxy_wallet_address if wallet else None
+
+                if not private_key:
+                    raise ValueError("No default wallet with private key found")
+
+                try:
+                    from py_clob_client.client import ClobClient
+
+                    kwargs = {
+                        "host": "https://clob.polymarket.com",
+                        "key": private_key,
+                        "chain_id": 137,
+                    }
+                    if proxy:
+                        kwargs["signature_type"] = 2
+                        kwargs["funder"] = proxy
+
+                    self.clob_client = ClobClient(**kwargs)
+                    api_creds = self.clob_client.create_or_derive_api_creds()
+                    self.clob_client.set_api_creds(api_creds)
+                except Exception as e:
+                    print(f"Failed to initialize ClobClient: {e}")
+                    raise
 
         # Get or create shared data source
         data_source = await self._data_source_manager.get_or_create_source(
@@ -89,7 +115,7 @@ class StrategyRunner:
 
             while strategy.is_active:
                 try:
-                    await self._execute_strategy(db, strategy)
+                    await self._execute_strategy(db, strategy, data_source)
                     strategy.last_run_at = datetime.utcnow()
                     strategy.total_runs += 1
                     await db.commit()
@@ -100,32 +126,125 @@ class StrategyRunner:
                 await db.refresh(strategy)
 
     async def _execute_strategy(
-        self, db: AsyncSession, strategy: Strategy
+        self, db: AsyncSession, strategy: Strategy, data_source: DataSource
     ) -> Optional[SignalLog]:
         """Execute strategy once."""
 
-        # 1. 获取可用市场（根据过滤条件）
+        # 1. 获取可用市场
         markets = await self._get_available_markets(strategy)
 
         if not markets:
             return None
 
-        # 2. 调用 AI 分析
-        ai_result = await self._call_ai_analysis(strategy, markets)
+        # 2. 初始化过滤器和触发器
+        # 从 strategy.filters 获取过滤配置（JSON 字段）
+        filter_config = {}
+        if strategy.filters:
+            filter_config = strategy.filters if isinstance(strategy.filters, dict) else {}
+        elif strategy.position_monitor:
+            # 兼容旧字段
+            filter_config = {
+                'min_confidence': 40,
+                'min_price': 0.5,
+                'max_price': 0.99,
+                'max_hours_to_expiry': 6,
+            }
+
+        signal_filter = SignalFilter(filter_config)
+
+        # 从 strategy.trigger 获取触发配置
+        trigger_config = {}
+        if strategy.trigger:
+            trigger_config = strategy.trigger if isinstance(strategy.trigger, dict) else {}
+
+        trigger_checker = TriggerChecker(trigger_config)
+
+        # 3. 检查冷却时间
+        if not trigger_checker.check_cooldown():
+            return None
+
+        # 4. 获取数据源并过滤市场 + 检查触发条件
+        triggered_markets = []
+        for market in markets:
+            token_id = market.get("id") or market.get("token_id")
+            if not token_id:
+                continue
+
+            # 获取实时价格数据
+            market_data = await data_source.get_market_data(token_id)
+            if not market_data:
+                continue
+
+            # 应用 SignalFilter 过滤
+            if not signal_filter.filter_market(market_data):
+                continue
+
+            # 检查关键词过滤
+            market_name = market.get("question", market.get("symbol", ""))
+            if not signal_filter.filter_by_keywords(market_name):
+                continue
+
+            # 检查触发条件（价格波动 + 净流入）
+            # 先检查价格波动触发
+            old_price = market.get("price", 0.5)
+            new_price = market_data.yes_price
+
+            price_triggered = trigger_checker.check_price_trigger(old_price, new_price)
+
+            # 检查 Activity 净流入触发
+            activity_data = await data_source.get_activity(token_id)
+            netflow = activity_data.netflow if activity_data else 0
+            activity_triggered = trigger_checker.check_activity_trigger(netflow, new_price)
+
+            if price_triggered or activity_triggered:
+                # 标记触发，给 AI 更多参考
+                market["_triggered"] = True
+                market["_price_change"] = abs(new_price - old_price) / old_price * 100 if old_price > 0 else 0
+                market["_netflow"] = netflow
+
+            triggered_markets.append(market)
+
+        if not triggered_markets:
+            return None
+
+        # 5. 调用 AI 分析
+        ai_result = await self._call_ai_analysis(strategy, triggered_markets)
 
         if not ai_result:
             return None
 
-        # 3. 计算下单金额
+        # 6. AI 置信度过滤
+        confidence = ai_result.get("confidence", 0)
+        min_confidence = signal_filter.min_confidence / 100  # 转换为 0-1
+        if confidence < min_confidence:
+            return None
+
+        # 7. 标记触发成功
+        trigger_checker.update_trigger_time()
+
+        # 8. 计算下单金额
         order_size = self._calculate_order_size(
-            strategy, ai_result.get("confidence", 0.5)
+            strategy, confidence
         )
 
-        # 4. 创建 SignalLog
-        # 从 markets 列表中获取第一个市场（简化示例，实际应该根据 ai_result 选择对应的市场）
-        market = markets[0] if markets else {}
-        market_id = market.get("id", "")
-        symbol = market.get("symbol", "")
+        # 9. 创建 SignalLog
+        # 从 triggered_markets 列表中获取对应的市场
+        market_id = ai_result.get("market_id", "")
+        symbol = ai_result.get("symbol", "")
+
+        # 尝试从 triggered_markets 中找到对应的市场
+        selected_market = None
+        for m in triggered_markets:
+            if m.get("id") == market_id or m.get("symbol") == symbol:
+                selected_market = m
+                break
+
+        if not selected_market and triggered_markets:
+            selected_market = triggered_markets[0]
+
+        if selected_market:
+            market_id = market_id or selected_market.get("id", "")
+            symbol = symbol or selected_market.get("symbol", "")
 
         signal_log = SignalLog(
             id=UUID(),
@@ -162,15 +281,29 @@ class StrategyRunner:
         return signal_log
 
     async def _get_available_markets(self, strategy: Strategy) -> list[dict]:
-        """使用 SDK v2 获取可用市场"""
-        # 计算截止时间
-        hours = strategy.market_filter_days * 24 if strategy.market_filter_days else 24
+        """从 Gamma API 获取可用市场"""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={
+                        "active": "true",
+                        "archived": "false",
+                        "closed": "false",
+                        "limit": 100,
+                        "order": "volume",
+                        "ascending": "false",
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
-        # 获取即将到期的市场
-        markets = await self.sdk.gamma_api.get_markets_ending_within_hours(hours)
-
-        # 过滤活跃市场
-        return [m for m in markets if m.get("active") and m.get("volume", 0) > 1000]
+            markets = data if isinstance(data, list) else data.get("markets", [])
+            return [m for m in markets if m.get("active") and m.get("volume", 0) > 1000]
+        except Exception as e:
+            print(f"Failed to fetch markets from Gamma API: {e}")
+            return []
 
     async def _call_ai_analysis(
         self, strategy: Strategy, markets: list[dict]
@@ -421,62 +554,44 @@ Provide your analysis and trading decision in JSON format."""
         strategy: Strategy,
         signal_log: SignalLog,
     ) -> None:
-        """使用 SDK v2 执行订单"""
-        if not self.sdk:
-            print("SDK not initialized")
+        """使用 py-clob-client v2 执行订单"""
+        if not self.clob_client:
+            print("ClobClient not initialized")
+            return
+
+        market_id = signal_log.market_id
+        if not market_id:
+            print("No market_id in signal")
             return
 
         try:
-            # 1. 从 signal_log 获取 market 信息
-            # signal_log 应该有 market_id 或 condition_id
-            market_id = signal_log.market_id
-
-            if not market_id:
-                print("No market_id in signal")
-                return
-
-            # 2. 获取市场详情，包含 token_id
-            market = await self.sdk.gamma_api.get_market(market_id)
-
-            if not market:
-                print(f"Market not found: {market_id}")
-                return
-
-            # 3. 根据 side (yes/no) 获取对应的 token_id
-            side = "yes" if signal_log.side == "yes" else "no"
-
-            # 从市场数据中获取 token_id
-            # 市场数据通常包含 tokens 或 clob_token_ids
-            tokens = market.get("tokens", [])
-
-            token_id = None
-            for token in tokens:
-                if token.get("outcome") == side:
-                    token_id = token.get("token_id")
-                    break
-
+            # 1. 从 Gamma API 获取市场详情（token_id）
+            token_id = await self._get_token_id(market_id, signal_log.side)
             if not token_id:
-                # 备用：从 clob_token_ids 获取
-                clob_token_ids = market.get("clob_token_ids", {})
-                token_id = clob_token_ids.get(side)
-
-            if not token_id:
-                print(f"Token not found for side: {side}")
+                print(f"Token not found for side: {signal_log.side}")
                 return
 
-            # 4. 执行市价单
-            order_side = Side.YES if signal_log.side == "yes" else Side.NO
+            # 2. 执行市价单（py-clob-client 是同步的，用 to_thread 跑）
+            from py_clob_client.clob_types import MarketOrderArgs
+            from py_clob_client.order_builder.constants import BUY, SELL
 
-            result = await self.sdk.trading_service.create_market_order(
+            order_side = BUY if signal_log.side == "yes" else SELL
+            order_args = MarketOrderArgs(
                 token_id=token_id,
-                side=order_side,
                 amount=float(signal_log.size),
-                order_type="GTC"
+                side=order_side,
+            )
+
+            signed_order = await asyncio.to_thread(
+                self.clob_client.create_market_order, order_args
+            )
+            result = await asyncio.to_thread(
+                self.clob_client.post_order, signed_order
             )
 
             print(f"Order placed: {result}")
 
-            # 5. 创建 Order 记录
+            # 3. 创建 Order 记录
             order = Order(
                 id=UUID(),
                 user_id=strategy.user_id,
@@ -490,7 +605,6 @@ Provide your analysis and trading decision in JSON format."""
                 size=signal_log.size,
                 filled_size=Decimal(str(result.get("size", signal_log.size))),
                 status="filled",
-                # 其他必要字段...
             )
             db.add(order)
             await db.commit()
@@ -501,6 +615,32 @@ Provide your analysis and trading decision in JSON format."""
             traceback.print_exc()
             signal_log.status = "failed"
             await db.commit()
+
+    async def _get_token_id(self, condition_id: str, side: str) -> Optional[str]:
+        """从 Gamma API 获取指定 outcome 的 token_id."""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://gamma-api.polymarket.com/markets/{condition_id}",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                market = resp.json()
+
+            # 先查 tokens 数组
+            for token in market.get("tokens", []):
+                if token.get("outcome", "").lower() == side.lower():
+                    return token.get("token_id")
+
+            # 备用：clob_token_ids
+            clob_ids = market.get("clob_token_ids", {})
+            if isinstance(clob_ids, dict):
+                return clob_ids.get(side.lower())
+
+        except Exception as e:
+            print(f"Failed to get token_id from Gamma API: {e}")
+
+        return None
 
 
 # 全局实例

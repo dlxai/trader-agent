@@ -25,33 +25,37 @@ from src.core.crypto import encrypt_private_key, decrypt_private_key
 router = APIRouter(prefix="/api/wallets", tags=["wallets"])
 
 
-def validate_private_key(private_key: str) -> tuple[bool, Optional[str]]:
+def validate_private_key(private_key: str) -> tuple[bool, tuple[str, str] | str]:
     """Validate private key format and derive address.
 
     Returns:
-        Tuple of (is_valid, error_message)
+        Tuple of (is_valid, (address, normalized_key) or error_message)
     """
     if not private_key:
         return False, "Private key is required"
 
-    # Check 0x prefix
-    if not private_key.startswith("0x"):
-        return False, "Private key must start with 0x"
+    # Strip all whitespace/newlines
+    normalized_key = "".join(private_key.split())
 
-    # Check length (64 hex chars + 0x prefix = 66)
-    if len(private_key) != 66:
-        return False, f"Private key must be 66 characters, got {len(private_key)}"
+    # Remove optional 0x prefix for validation
+    if normalized_key.startswith("0x"):
+        hex_part = normalized_key[2:]
+    else:
+        hex_part = normalized_key
 
-    # Check hex characters
-    hex_part = private_key[2:]
+    # Core private key: 64 hex chars
+    if len(hex_part) != 64:
+        return False, f"Private key must be 64 hex characters, got {len(hex_part)}"
+
     try:
         int(hex_part, 16)
     except ValueError:
         return False, "Private key contains invalid hex characters"
 
-    # Derive address (simplified - just use first 40 chars as address)
+    # Normalize to 0x prefix for downstream compatibility
+    normalized_key = "0x" + hex_part
     address = "0x" + hex_part[:40]
-    return True, address
+    return True, (address, normalized_key)
 
 
 @router.get("", response_model=ApiResponse[WalletListResponse])
@@ -77,6 +81,7 @@ async def list_wallets(
         select(Wallet).where(Wallet.user_id == current_user.id)
     )
     total = len(count_result.scalars().all())
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return ApiResponse(
         success=True,
@@ -85,6 +90,9 @@ async def list_wallets(
             total=total,
             page=page,
             page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
         ),
     )
 
@@ -102,7 +110,8 @@ async def create_wallet(
         from src.core.exceptions import ValidationError
         raise ValidationError(result)
 
-    address = result
+    # result is now (address, normalized_key)
+    address, normalized_key = result
 
     # If setting as default, unset other defaults
     if request.is_default if hasattr(request, 'is_default') else False:
@@ -115,15 +124,15 @@ async def create_wallet(
             )
         )
 
-    # Encrypt private key
-    encrypted_key = encrypt_private_key(request.private_key)
+    # Encrypt private key (use normalized key)
+    encrypted_key = encrypt_private_key(normalized_key)
 
     wallet = Wallet(
         user_id=current_user.id,
         name=request.name,
         address=address,
         private_key_encrypted=encrypted_key,
-        proxy_url=request.proxy_url,
+        proxy_wallet_address=request.proxy_wallet_address,
         is_default=request.is_default if hasattr(request, 'is_default') else False,
         status="active",
     )
@@ -211,10 +220,12 @@ async def update_wallet(
         if not is_valid:
             from src.core.exceptions import ValidationError
             raise ValidationError(result)
-        wallet.address = result
-        wallet.private_key_encrypted = encrypt_private_key(request.private_key)
-    if request.proxy_url is not None:
-        wallet.proxy_url = request.proxy_url
+        # result is (address, normalized_key)
+        address, normalized_key = result
+        wallet.address = address
+        wallet.private_key_encrypted = encrypt_private_key(normalized_key)
+    if request.proxy_wallet_address is not None:
+        wallet.proxy_wallet_address = request.proxy_wallet_address
     if request.is_active is not None:
         wallet.is_active = request.is_active
     if request.is_default is not None:
@@ -290,10 +301,10 @@ async def test_wallet(
         )
 
     # Validate and derive address
-    is_valid, validation_result = validate_private_key(private_key)
+    is_valid, result = validate_private_key(private_key)
     if not is_valid:
         wallet.status = "error"
-        wallet.last_error = validation_result
+        wallet.last_error = result
         wallet.error_count += 1
         await db.commit()
         return ApiResponse(
@@ -301,23 +312,90 @@ async def test_wallet(
             data=WalletTestResponse(
                 success=False,
                 message="Invalid private key",
-                error=validation_result,
+                error=result,
             ),
         )
 
-    derived_address = validation_result
+    # result is (address, normalized_key)
+    derived_address, normalized_key = result
 
-    # Try to get balance from Polymarket
+    # Try to get proxy wallet USDC balance on-chain
     balance = None
     try:
-        from src.polymarket import get_client
+        from py_clob_client.client import ClobClient
+        from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
 
-        client = get_client(
-            private_key=private_key,
-            proxy=wallet.proxy_url,
-        )
-        balance_obj = client.get_balance()
-        balance = str(balance_obj.usdc_balance)
+        # 1. 初始化 ClobClient（用于验证私钥有效性）
+        clob_kwargs = {
+            "host": "https://clob.polymarket.com",
+            "key": normalized_key,
+            "chain_id": 137,
+        }
+        if wallet.proxy_wallet_address:
+            clob_kwargs["signature_type"] = 2
+            clob_kwargs["funder"] = wallet.proxy_wallet_address
+
+        client = ClobClient(**clob_kwargs)
+        api_creds = client.create_or_derive_api_creds()
+        client.set_api_creds(api_creds)
+
+        # 2. 查 proxy wallet 链上 USDC 余额
+        proxy = wallet.proxy_wallet_address
+        if proxy:
+            import httpx
+
+            # USDC 合约地址 (Polygon)
+            USDC_CONTRACT = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            # balanceOf(address) selector
+            data = "0x70a08231" + proxy.lower().replace("0x", "").zfill(64)
+
+            # 尝试多个公共 RPC，避免单点故障
+            rpc_urls = [
+                "https://rpc.ankr.com/polygon",
+                "https://polygon-bor-rpc.publicnode.com",
+                "https://polygon.llamarpc.com",
+            ]
+            result = None
+            last_err = None
+            for rpc_url in rpc_urls:
+                try:
+                    resp = httpx.post(
+                        rpc_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "eth_call",
+                            "params": [
+                                {"to": USDC_CONTRACT, "data": data},
+                                "latest",
+                            ],
+                        },
+                        timeout=15,
+                    )
+                    resp.raise_for_status()
+                    rpc_result = resp.json()
+                    # HTTP 200 不代表 RPC 成功，检查 JSON body 里是否有 error
+                    if "error" not in rpc_result and "result" in rpc_result:
+                        result = rpc_result
+                        break
+                    last_err = RuntimeError(f"{rpc_url} RPC error: {rpc_result.get('error')}")
+                except Exception as e:
+                    last_err = e
+                    continue
+
+            if result is None:
+                raise last_err or RuntimeError("All Polygon RPC endpoints failed")
+            raw_hex = result.get("result", "0x0")
+            raw_balance = int(raw_hex, 16) if raw_hex.startswith("0x") else 0
+            # USDC 有 6 位小数
+            balance = str(raw_balance / 1_000_000)
+        else:
+            # 没有 proxy 地址，退回到 CLOB allowance（仅作参考）
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            result = client.get_balance_allowance(params)
+            raw_balance = result.get("balance", 0) if isinstance(result, dict) else 0
+            balance = str(float(raw_balance) / 1_000_000)
+
         wallet.usdc_balance = balance
         wallet.status = "active"
         wallet.last_error = None

@@ -180,6 +180,8 @@ async def list_positions(
         for p in positions
     ]
 
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
     return ApiResponse(
         success=True,
         data=PositionListResponse(
@@ -187,6 +189,9 @@ async def list_positions(
             total=total,
             page=page,
             page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
         ),
     )
 

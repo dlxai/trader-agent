@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Bell, Shield, Palette, Moon, Sun, Monitor, Eye, EyeOff } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Bell, Shield, Palette, Moon, Sun, Monitor, Eye, EyeOff, Brain, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Card, CardContent } from '@/components/ui/Card'
 import { Input } from '@/components/ui/Input'
@@ -8,6 +9,8 @@ import { Separator } from '@/components/ui/Separator'
 import { Switch } from '@/components/ui/Switch'
 import { cn } from '@/lib/utils'
 import { useThemeStore } from '@/stores/theme'
+import { settingsApi } from '@/lib/api'
+import { AVAILABLE_AI_MODELS, AI_PROVIDER_URLS, type AIModelConfig } from '@/types'
 
 interface SettingsSectionProps {
   title: string
@@ -47,7 +50,7 @@ function AppearanceSettings() {
               'flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all',
               theme === 'light'
                 ? 'border-emerald-500 bg-emerald-500/10'
-                : 'border-void-300 hover:border-void-400'
+                : 'border-border hover:border-border'
             )}
           >
             <Sun className="h-6 w-6" />
@@ -59,7 +62,7 @@ function AppearanceSettings() {
               'flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all',
               theme === 'dark'
                 ? 'border-emerald-500 bg-emerald-500/10'
-                : 'border-void-300 hover:border-void-400'
+                : 'border-border hover:border-border'
             )}
           >
             <Moon className="h-6 w-6" />
@@ -71,7 +74,7 @@ function AppearanceSettings() {
               'flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-all',
               theme === 'system'
                 ? 'border-emerald-500 bg-emerald-500/10'
-                : 'border-void-300 hover:border-void-400'
+                : 'border-border hover:border-border'
             )}
           >
             <Monitor className="h-6 w-6" />
@@ -94,6 +97,41 @@ function NotificationSettings() {
     orders: true,
     priceAlerts: false,
   })
+  const [showTelegramConfig, setShowTelegramConfig] = useState(false)
+  const [botToken, setBotToken] = useState('')
+  const [chatId, setChatId] = useState('')
+
+  // 获取 Telegram 配置
+  const { data: telegramConfig, refetch } = useQuery({
+    queryKey: ['telegram-config'],
+    queryFn: () => settingsApi.getTelegramConfig(),
+  })
+
+  // 保存 Telegram 配置
+  const saveTelegramMutation = useMutation({
+    mutationFn: () => settingsApi.configureTelegram(botToken, chatId),
+    onSuccess: () => {
+      alert('Telegram 配置成功！请检查 Bot 是否收到测试消息。')
+      setShowTelegramConfig(false)
+      setBotToken('')
+      setChatId('')
+      refetch()
+    },
+    onError: () => {
+      alert('配置失败，请检查 Token 和 Chat ID 是否正确')
+    },
+  })
+
+  // 删除 Telegram 配置
+  const deleteTelegramMutation = useMutation({
+    mutationFn: () => settingsApi.deleteTelegramConfig(),
+    onSuccess: () => {
+      alert('已解除 Telegram 通知')
+      refetch()
+    },
+  })
+
+  const telegramConnected = telegramConfig?.is_configured
 
   return (
     <SettingsSection
@@ -101,7 +139,83 @@ function NotificationSettings() {
       description="选择您希望接收的通知类型"
     >
       <div className="space-y-4">
-        <div className="flex items-center justify-between rounded-lg border border-void-300 p-4">
+        {/* Telegram 通知 */}
+        <div className="rounded-lg border border-border p-4">
+          {showTelegramConfig ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-base">配置 Telegram Bot</Label>
+                <Button variant="ghost" size="sm" onClick={() => setShowTelegramConfig(false)}>
+                  取消
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                1. 在 @BotFather 创建 Bot<br />
+                2. 启动 Bot 后发送 /start<br />
+                3. 访问 https://t.me/userinfobot 获取你的 Chat ID
+              </p>
+              <div className="space-y-2">
+                <Input
+                  placeholder="Bot Token (如 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11)"
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                />
+                <Input
+                  placeholder="Chat ID (如 123456789)"
+                  value={chatId}
+                  onChange={(e) => setChatId(e.target.value)}
+                />
+                <Button
+                  className="w-full"
+                  onClick={() => saveTelegramMutation.mutate()}
+                  disabled={!botToken || !chatId || saveTelegramMutation.isPending}
+                  isLoading={saveTelegramMutation.isPending}
+                >
+                  保存并发送测试消息
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <Label className="text-base">Telegram 通知</Label>
+                  {telegramConnected && (
+                    <span className="text-xs bg-emerald-500/10 text-emerald-500 px-2 py-0.5 rounded-full">
+                      已连接
+                    </span>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {telegramConfig?.bot_token_masked
+                    ? `Bot: ${telegramConfig.bot_token_masked} | Chat ID: ${telegramConfig.chat_id}`
+                    : '通过 Telegram Bot 接收交易通知'}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {telegramConnected && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => deleteTelegramMutation.mutate()}
+                    className="text-red-500 hover:text-red-600"
+                  >
+                    解除
+                  </Button>
+                )}
+                <Button
+                  variant={telegramConnected ? 'outline' : 'default'}
+                  size="sm"
+                  onClick={() => setShowTelegramConfig(true)}
+                >
+                  {telegramConnected ? '重新配置' : '配置'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between rounded-lg border border-border p-4">
           <div className="space-y-0.5">
             <Label className="text-base">邮件通知</Label>
             <p className="text-sm text-muted-foreground">
@@ -116,11 +230,11 @@ function NotificationSettings() {
           />
         </div>
 
-        <div className="flex items-center justify-between rounded-lg border border-void-300 p-4">
+        <div className="flex items-center justify-between rounded-lg border border-border p-4">
           <div className="space-y-0.5">
-            <Label className="text-base">推送通知</Label>
+            <Label className="text-base">浏览器推送</Label>
             <p className="text-sm text-muted-foreground">
-              Receive push notifications in your browser
+              在浏览器中接收推送通知
             </p>
           </div>
           <Switch
@@ -134,10 +248,10 @@ function NotificationSettings() {
         <Separator />
 
         <div className="space-y-3">
-          <h4 className="text-sm font-medium">Notification Types</h4>
+          <h4 className="text-sm font-medium">通知类型</h4>
 
           <div className="flex items-center justify-between">
-            <Label className="text-sm">Trade Executions</Label>
+            <Label className="text-sm">交易执行</Label>
             <Switch
               checked={settings.trades}
               onCheckedChange={(checked) =>
@@ -147,7 +261,7 @@ function NotificationSettings() {
           </div>
 
           <div className="flex items-center justify-between">
-            <Label className="text-sm">Order Updates</Label>
+            <Label className="text-sm">订单更新</Label>
             <Switch
               checked={settings.orders}
               onCheckedChange={(checked) =>
@@ -171,6 +285,169 @@ function NotificationSettings() {
   )
 }
 
+function AIModelSettings() {
+  const queryClient = useQueryClient()
+
+  // Initialize with default models
+  const [models, setModels] = useState<AIModelConfig[]>(
+    AVAILABLE_AI_MODELS.map(m => ({ ...m, enabled: false, api_key: '', custom_api_url: '', custom_model_name: '' }))
+  )
+
+  // Fetch current preferences from backend
+  const { data: currentPrefs } = useQuery({
+    queryKey: ['user-preferences'],
+    queryFn: () => settingsApi.getSettings(),
+  })
+
+  // Update models when preferences load
+  useEffect(() => {
+    if (currentPrefs?.ai_models) {
+      setModels(prev => prev.map(m => {
+        const saved = currentPrefs.ai_models?.find(sm => sm.id === m.id)
+        return saved ? { ...m, ...saved } : m
+      }))
+    }
+  }, [currentPrefs])
+
+  const saveMutation = useMutation({
+    mutationFn: (aiModels: AIModelConfig[]) =>
+      settingsApi.updateSettings({ ai_models: aiModels } as any),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-preferences'] })
+      alert('配置已保存')
+    },
+    onError: (error) => {
+      console.error('Failed to save models:', error)
+      alert('保存失败，请重试')
+    },
+  })
+
+  const toggleModel = (modelId: string) => {
+    setModels(prev => prev.map(m =>
+      m.id === modelId ? { ...m, enabled: !m.enabled } : m
+    ))
+  }
+
+  const updateModelApiKey = (modelId: string, apiKey: string) => {
+    setModels(prev => prev.map(m =>
+      m.id === modelId ? { ...m, api_key: apiKey } : m
+    ))
+  }
+
+  const updateModelCustomUrl = (modelId: string, url: string) => {
+    setModels(prev => prev.map(m =>
+      m.id === modelId ? { ...m, custom_api_url: url } : m
+    ))
+  }
+
+  const updateModelCustomName = (modelId: string, name: string) => {
+    setModels(prev => prev.map(m =>
+      m.id === modelId ? { ...m, custom_model_name: name } : m
+    ))
+  }
+
+  const saveModels = () => {
+    saveMutation.mutate(models)
+  }
+
+  const configuredModels = models.filter(m => m.enabled && m.api_key)
+
+  return (
+    <SettingsSection
+      title="AI 模型配置"
+      description="配置用于交易决策的 AI 模型"
+    >
+      <div className="space-y-4">
+        {models.map((model) => (
+          <div
+            key={model.id}
+            className={cn(
+              'rounded-lg border p-4 transition-all',
+              model.enabled ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-border'
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted">
+                  <Brain className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="font-medium">{model.name}</h4>
+                  <p className="text-xs text-muted-foreground capitalize">{model.provider}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={model.enabled}
+                  onCheckedChange={() => toggleModel(model.id)}
+                />
+              </div>
+            </div>
+
+            {model.enabled && (
+              <div className="mt-4 space-y-3">
+                <div className="space-y-2">
+                  <Label>API Key</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      placeholder="输入 API Key"
+                      value={model.api_key || ''}
+                      onChange={(e) => updateModelApiKey(model.id, e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => window.open(AI_PROVIDER_URLS[model.provider], '_blank')}
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Custom API URL */}
+                <div className="space-y-2">
+                  <Label>自定义 API URL (可选)</Label>
+                  <Input
+                    placeholder="如使用代理或自定义端点"
+                    value={model.custom_api_url || ''}
+                    onChange={(e) => updateModelCustomUrl(model.id, e.target.value)}
+                  />
+                </div>
+
+                {/* Custom Model Name */}
+                <div className="space-y-2">
+                  <Label>自定义模型名称 (可选)</Label>
+                  <Input
+                    placeholder="如 deepseek-chat, gpt-4 等"
+                    value={model.custom_model_name || ''}
+                    onChange={(e) => updateModelCustomName(model.id, e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-muted/50 p-4">
+          <div>
+            <h4 className="font-medium">已配置模型 ({configuredModels.length})</h4>
+            <p className="text-sm text-muted-foreground mt-1">
+              {configuredModels.length === 0
+                ? '请启用并配置至少一个 AI 模型'
+                : configuredModels.map(m => m.name).join(', ')}
+            </p>
+          </div>
+          <Button onClick={saveModels} isLoading={saveMutation.isPending}>
+            保存配置
+          </Button>
+        </div>
+      </div>
+    </SettingsSection>
+  )
+}
+
 function SecuritySettings() {
   const [showPassword, setShowPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
@@ -182,7 +459,7 @@ function SecuritySettings() {
     >
       <div className="space-y-4">
         {/* Password Change */}
-        <div className="rounded-lg border border-void-300 p-4">
+        <div className="rounded-lg border border-border p-4">
           <h4 className="text-sm font-medium mb-4">修改密码</h4>
           <div className="space-y-3">
             <div className="space-y-1">
@@ -236,7 +513,7 @@ function SecuritySettings() {
         <Separator />
 
         {/* Two-Factor Authentication */}
-        <div className="rounded-lg border border-void-300 p-4">
+        <div className="rounded-lg border border-border p-4">
           <div className="flex items-center justify-between">
             <div>
               <h4 className="text-sm font-medium">Two-Factor Authentication</h4>
@@ -249,7 +526,7 @@ function SecuritySettings() {
         </div>
 
         {/* API Keys */}
-        <div className="rounded-lg border border-void-300 p-4">
+        <div className="rounded-lg border border-border p-4">
           <div className="flex items-center justify-between">
             <div>
               <h4 className="text-sm font-medium">API 密钥</h4>
@@ -291,7 +568,7 @@ export default function SettingsPage() {
                   'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   activeTab === 'appearance'
                     ? 'bg-emerald-500/10 text-emerald-500'
-                    : 'text-muted-foreground hover:bg-void-200 hover:text-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
                 <Palette className="h-4 w-4" />
@@ -303,7 +580,7 @@ export default function SettingsPage() {
                   'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   activeTab === 'notifications'
                     ? 'bg-emerald-500/10 text-emerald-500'
-                    : 'text-muted-foreground hover:bg-void-200 hover:text-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
                 <Bell className="h-4 w-4" />
@@ -315,7 +592,7 @@ export default function SettingsPage() {
                   'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   activeTab === 'security'
                     ? 'bg-emerald-500/10 text-emerald-500'
-                    : 'text-muted-foreground hover:bg-void-200 hover:text-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
                 <Shield className="h-4 w-4" />

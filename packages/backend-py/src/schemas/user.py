@@ -56,6 +56,18 @@ class UserListResponse(PaginatedResponse[UserResponse]):
     pass
 
 
+class AIModelConfig(BaseSchema):
+    """AI model configuration schema."""
+
+    id: str
+    name: str
+    provider: str
+    enabled: bool = False
+    api_key: Optional[str] = None
+    custom_api_url: Optional[str] = None
+    custom_model_name: Optional[str] = None
+
+
 class UserPreferences(BaseSchema):
     """User preferences schema."""
 
@@ -65,6 +77,8 @@ class UserPreferences(BaseSchema):
     notifications_enabled: bool = True
     email_notifications: bool = True
     trading_notifications: bool = True
+    # AI Model configurations
+    ai_models: List[AIModelConfig] = []
 
 
 class UserPreferencesUpdate(BaseSchema):
@@ -76,3 +90,4 @@ class UserPreferencesUpdate(BaseSchema):
     notifications_enabled: Optional[bool] = None
     email_notifications: Optional[bool] = None
     trading_notifications: Optional[bool] = None
+    ai_models: Optional[List[AIModelConfig]] = None

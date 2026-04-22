@@ -1,5 +1,6 @@
 """Application configuration using Pydantic Settings."""
 
+from pathlib import Path
 from typing import List, Literal, Optional
 from functools import lru_cache
 
@@ -77,7 +78,8 @@ class Settings(BaseSettings):
                 f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
             )
         else:
-            return "sqlite+aiosqlite:///./jmwl_trading.db"
+            db_path = Path(__file__).resolve().parent.parent.parent / "jmwl_trading.db"
+            return f"sqlite+aiosqlite:///{db_path.as_posix()}"
 
 
 @lru_cache

@@ -1,4 +1,4 @@
-import { Menu, Bell, Search, Sun, Moon, Command } from 'lucide-react'
+import { Menu, Bell, Sun, Moon, Command } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { useThemeStore } from '@/stores/theme'
 import { useAuthStore } from '@/stores/auth'
@@ -15,7 +15,7 @@ export function Header({ onMenuClick, onToggleSidebar, isSidebarOpen }: HeaderPr
   const { user } = useAuthStore()
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-void-300 bg-void-50/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-void-50/80">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-muted/50/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-muted/50/80">
       {/* Left section */}
       <div className="flex items-center gap-3">
         <Button
@@ -36,21 +36,6 @@ export function Header({ onMenuClick, onToggleSidebar, isSidebarOpen }: HeaderPr
         </Button>
       </div>
 
-      {/* Center section - Search */}
-      <div className="hidden flex-1 items-center justify-center px-8 md:flex">
-        <div className="relative w-full max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search portfolios, positions, orders..."
-            className="h-9 w-full rounded-md border border-void-300 bg-void-100 pl-10 pr-4 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-          />
-          <kbd className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 rounded border border-void-300 bg-void-200 px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground md:flex">
-            <span>Ctrl</span>
-            <span>K</span>
-          </kbd>
-        </div>
-      </div>
 
       {/* Right section */}
       <div className="flex items-center gap-2">
@@ -76,7 +61,7 @@ export function Header({ onMenuClick, onToggleSidebar, isSidebarOpen }: HeaderPr
 
         {/* User menu */}
         {user && (
-          <div className="flex items-center gap-3 pl-4 border-l border-void-300">
+          <div className="flex items-center gap-3 pl-4 border-l border-border">
             <div className="hidden md:block text-right">
               <p className="text-sm font-medium">{(user as any).username || (user as any).name || 'User'}</p>
               <p className="text-xs text-muted-foreground">{user.email}</p>

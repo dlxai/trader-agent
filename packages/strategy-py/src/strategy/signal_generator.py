@@ -1137,7 +1137,11 @@ class LayeredSignalPipeline:
         self.config = config or {}
         self.min_odds_edge = self.config.get('min_odds_edge', 0.05)  # 最小赔率优势 5%
         self.min_composite_confidence = self.config.get('min_composite_confidence', 0.65)
-        self.daily_loss_limit = self.config.get('daily_loss_limit', 0.02)  # 日内亏损2%熔断
+
+        # 风险配置 (预测市场高频交易，需要放宽)
+        self.daily_loss_limit = self.config.get('daily_loss_limit', 0.10)  # 默认10%熔断
+        self.max_consecutive_losses = self.config.get('max_consecutive_losses', 10)  # 默认10连亏熔断
+        self.max_daily_trades = self.config.get('max_daily_trades', 50)  # 每日最大交易次数
 
         # 信号生成器
         self.odds_generator = OddsBiasSignalGenerator()
@@ -1149,6 +1153,7 @@ class LayeredSignalPipeline:
         # 风险状态
         self.daily_pnl = 0.0
         self.consecutive_losses = 0
+        self.daily_trade_count = 0
         self.last_trade_time = None
 
         # 初始化子生成器
@@ -1235,19 +1240,25 @@ class LayeredSignalPipeline:
 
     def _check_risk_limits(self) -> bool:
         """
-        Layer 1: 风险检查
+        Layer 1: 风险检查 (预测市场高频交易场景)
 
-        - 日内亏损超过2%熔断
-        - 连续亏损3次后熔断
+        - 日内亏损超过10%熔断
+        - 连续亏损10次后熔断
+        - 每日最大交易次数限制
         """
         # 日内亏损检查
         if self.daily_pnl <= -self.daily_loss_limit:
             self.logger.warning(f"Daily loss limit reached: {self.daily_pnl:.1%}")
             return False
 
-        # 连续亏损检查
-        if self.consecutive_losses >= 3:
+        # 连续亏损检查 (放宽到10次)
+        if self.consecutive_losses >= self.max_consecutive_losses:
             self.logger.warning(f"Consecutive losses limit reached: {self.consecutive_losses}")
+            return False
+
+        # 每日交易次数限制
+        if self.daily_trade_count >= self.max_daily_trades:
+            self.logger.warning(f"Daily trade limit reached: {self.daily_trade_count}")
             return False
 
         return True
@@ -1361,6 +1372,7 @@ class LayeredSignalPipeline:
     def update_pnl(self, pnl: float):
         """更新每日盈亏"""
         self.daily_pnl += pnl
+        self.daily_trade_count += 1
         if pnl < 0:
             self.consecutive_losses += 1
         else:
@@ -1371,3 +1383,4 @@ class LayeredSignalPipeline:
         """重置每日状态 (UTC 0点调用)"""
         self.daily_pnl = 0.0
         self.consecutive_losses = 0
+        self.daily_trade_count = 0

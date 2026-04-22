@@ -1,13 +1,32 @@
 """FastAPI application entry point."""
 
+import logging
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
 from src.database import init_db, close_db
-from src.routers import health, auth, users, portfolios, positions, orders, providers, wallets, strategies
+from src.routers import health, auth, users, portfolios, positions, orders, providers, wallets, strategies, signals
+
+# Configure logging to file
+LOG_DIR = Path(__file__).parent.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "backend.log"
+
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -50,6 +69,7 @@ def create_application() -> FastAPI:
     app.include_router(providers.router)
     app.include_router(wallets.router)
     app.include_router(strategies.router)
+    app.include_router(signals.router)
 
     return app
 

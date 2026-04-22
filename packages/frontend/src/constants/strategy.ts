@@ -77,6 +77,50 @@ export const TAIL_FILTERS = {
   max_hours_to_expiry: 2,  // 尾盘：2小时内
 };
 
+// Sports 策略预设值（更关注比分和 Activity）
+export const SPORTS_FILTERS = {
+  ...DEFAULT_FILTERS,
+  min_price: 0.3,
+  max_price: 0.95,
+  max_hours_to_expiry: 4,
+  dead_zone_enabled: false,  // Sports 市场不需要死区
+};
+
+export const SPORTS_TRIGGER = {
+  ...DEFAULT_TRIGGER,
+  price_change_threshold: 3,  // 更敏感
+  min_trigger_interval: 3,    // 更频繁
+};
+
+// 策略模板类型
+export type StrategyTemplateType = 'generic' | 'tail' | 'sports';
+
+export const STRATEGY_TEMPLATES: Record<StrategyTemplateType, {
+  name: string;
+  description: string;
+  filters: typeof DEFAULT_FILTERS;
+  trigger: typeof DEFAULT_TRIGGER;
+}> = {
+  generic: {
+    name: '通用策略',
+    description: '适用于大多数市场，基于价格和 Activity 触发',
+    filters: DEFAULT_FILTERS,
+    trigger: DEFAULT_TRIGGER,
+  },
+  tail: {
+    name: '尾盘策略',
+    description: '在市场到期前 2 小时内交易，高概率信号',
+    filters: TAIL_FILTERS,
+    trigger: DEFAULT_TRIGGER,
+  },
+  sports: {
+    name: 'Sports 策略',
+    description: '专注于体育赛事市场，监控比分变化',
+    filters: SPORTS_FILTERS,
+    trigger: SPORTS_TRIGGER,
+  },
+};
+
 export const DEFAULT_ORDER = {
   min_order_size: 10,
   max_order_size: 50,

@@ -1,7 +1,7 @@
 """Provider model for AI model providers."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from uuid import uuid4, UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship

@@ -5,7 +5,7 @@ from typing import List, Optional
 from uuid import uuid4, UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Boolean, DateTime, ForeignKey
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Text
 
 from src.database import Base
 from .base import TimestampMixin
@@ -31,6 +31,13 @@ class User(Base, TimestampMixin):
     last_login: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # User preferences (JSON string)
+    preferences: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Telegram notification
+    telegram_chat_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    telegram_bot_token: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # Relationships
     portfolios: Mapped[List["Portfolio"]] = relationship(

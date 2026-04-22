@@ -23,10 +23,12 @@ print_header() {
 start_backend() {
     echo -e "${YELLOW}Starting Backend (Python FastAPI)...${NC}"
     cd packages/backend-py
-    poetry run uvicorn src.main:app --reload --port 3001 &
+    mkdir -p logs
+    poetry run uvicorn src.main:app --reload --port 3001 > logs/backend.log 2>&1 &
     BACKEND_PID=$!
     echo -e "${GREEN}✓ Backend started at http://localhost:3001${NC}"
     echo -e "${GREEN}  API Docs: http://localhost:3001/docs${NC}"
+    echo -e "${GREEN}  Logs: packages/backend-py/logs/backend.log${NC}"
     cd ../..
 }
 

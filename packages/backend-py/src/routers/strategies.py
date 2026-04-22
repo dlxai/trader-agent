@@ -38,16 +38,16 @@ async def create_strategy(
     db: AsyncSession = Depends(get_async_session),
 ):
     """Create a new strategy."""
-    # 验证 portfolio 存在
-    result = await db.execute(
-        select(Portfolio).where(
-            Portfolio.id == request.portfolio_id,
-            Portfolio.user_id == current_user.id,
+    # 验证 portfolio 存在（可选）
+    portfolio = None
+    if request.portfolio_id:
+        result = await db.execute(
+            select(Portfolio).where(
+                Portfolio.id == request.portfolio_id,
+                Portfolio.user_id == current_user.id,
+            )
         )
-    )
-    portfolio = result.scalar_one_or_none()
-    if portfolio is None:
-        raise NotFoundError("Portfolio", f"Portfolio {request.portfolio_id} not found")
+        portfolio = result.scalar_one_or_none()
 
     # 创建策略
     strategy = Strategy(
@@ -56,20 +56,39 @@ async def create_strategy(
         portfolio_id=request.portfolio_id,
         name=request.name,
         description=request.description,
-        type="ai_trading",
+        type=request.type or "ai",
         provider_id=request.provider_id,
         system_prompt=request.system_prompt,
         custom_prompt=request.custom_prompt,
         data_sources=request.data_sources or {},
+        trigger=request.trigger,
+        filters=request.filters,
+        order=request.order,
+        position_monitor=request.position_monitor,
+        risk=request.risk,
         min_order_size=request.min_order_size,
         max_order_size=request.max_order_size,
+        default_amount=request.default_amount,
         market_filter_days=request.market_filter_days,
         market_filter_type=request.market_filter_type,
         run_interval_minutes=request.run_interval_minutes,
-        max_position_size=request.max_position_size or portfolio.max_position_size,
-        max_open_positions=request.max_open_positions or portfolio.max_open_positions,
-        stop_loss_percent=request.stop_loss_percent or portfolio.stop_loss_percent,
-        take_profit_percent=request.take_profit_percent or portfolio.take_profit_percent,
+        max_position_size=request.max_position_size or (portfolio.max_position_size if portfolio else None),
+        max_open_positions=request.max_open_positions or (portfolio.max_open_positions if portfolio else None),
+        max_positions=request.max_positions or 3,
+        min_risk_reward_ratio=request.min_risk_reward_ratio or Decimal("2.0"),
+        max_margin_usage=request.max_margin_usage or Decimal("0.9"),
+        min_position_size=request.min_position_size or Decimal("12"),
+        stop_loss_percent=request.stop_loss_percent or (portfolio.stop_loss_percent if portfolio else None),
+        take_profit_percent=request.take_profit_percent or (portfolio.take_profit_percent if portfolio else None),
+        order_type=request.order_type or "market",
+        time_in_force=request.time_in_force or "GTC",
+        slippage_tolerance=request.slippage_tolerance or Decimal("0.001"),
+        allowed_markets=request.allowed_markets,
+        excluded_markets=request.excluded_markets,
+        min_liquidity=request.min_liquidity,
+        max_spread_percent=request.max_spread_percent,
+        trading_schedule=request.trading_schedule,
+        timezone=request.timezone or "UTC",
         is_active=False,
         status="draft",
     )
@@ -116,16 +135,22 @@ async def list_strategies(
         StrategySummary(
             id=s.id,
             name=s.name,
+            description=s.description,
             type=s.type,
             is_active=s.is_active,
             status=s.status,
+            provider_id=s.provider_id,
             min_order_size=s.min_order_size,
             max_order_size=s.max_order_size,
             total_trades=s.total_trades,
             total_pnl=s.total_pnl,
+            run_interval_minutes=s.run_interval_minutes,
+            created_at=s.created_at,
         )
         for s in strategies
     ]
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
     return ApiResponse(
         success=True,
@@ -134,6 +159,9 @@ async def list_strategies(
             total=total,
             page=page,
             page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
         ),
     )
 

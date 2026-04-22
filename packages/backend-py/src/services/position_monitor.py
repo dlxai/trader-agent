@@ -1,21 +1,20 @@
 """Position monitor for stop-loss and take-profit."""
 
 import asyncio
-import sys
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 from typing import Optional
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-sys.path.insert(0, "/d/wework/polymarket-agent")
-from polymarket_sdk.sdk import PolymarketSDK
 
 from src.database import AsyncSessionLocal
 from src.models.position import Position
 from src.models.order import Order
 from src.models.wallet import Wallet
+from src.core.crypto import decrypt_private_key
 
 
 class PositionMonitor:
@@ -24,7 +23,7 @@ class PositionMonitor:
     def __init__(self):
         self._running = False
         self._check_interval = 60  # Check every 60 seconds
-        self.sdk: Optional[PolymarketSDK] = None
+        self.clob_client: Optional["ClobClient"] = None
 
     async def start(self) -> None:
         """Start the position monitor."""
@@ -37,17 +36,28 @@ class PositionMonitor:
             )
             wallet = result.scalar_one_or_none()
 
-            private_key = wallet.private_key_encrypted if wallet else None
+            private_key_raw = wallet.private_key_encrypted if wallet else None
+            private_key = decrypt_private_key(private_key_raw) if private_key_raw else None
             proxy_wallet_address = wallet.proxy_wallet_address if wallet else None
 
-        # 初始化 SDK
+        # 初始化 ClobClient v2
         try:
-            self.sdk = await PolymarketSDK.create(
-                private_key=private_key,
-                proxy_wallet_address=proxy_wallet_address
-            )
+            from py_clob_client.client import ClobClient
+
+            kwargs = {
+                "host": "https://clob.polymarket.com",
+                "key": private_key,
+                "chain_id": 137,
+            }
+            if proxy_wallet_address:
+                kwargs["signature_type"] = 2
+                kwargs["funder"] = proxy_wallet_address
+
+            self.clob_client = ClobClient(**kwargs)
+            api_creds = self.clob_client.create_or_derive_api_creds()
+            self.clob_client.set_api_creds(api_creds)
         except Exception as e:
-            print(f"Failed to initialize SDK: {e}")
+            print(f"Failed to initialize ClobClient: {e}")
             raise
 
         asyncio.create_task(self._monitor_loop())
@@ -55,13 +65,7 @@ class PositionMonitor:
     async def stop(self) -> None:
         """Stop the position monitor."""
         self._running = False
-
-        if self.sdk:
-            try:
-                await self.sdk.close()
-            except Exception as e:
-                print(f"Failed to close Polymarket SDK: {e}")
-            self.sdk = None
+        self.clob_client = None
 
     async def _monitor_loop(self) -> None:
         """Main monitoring loop."""
@@ -89,14 +93,22 @@ class PositionMonitor:
     ) -> None:
         """Check a single position."""
 
-        # 使用 SDK 获取实时价格
         current_price = position.current_price
 
-        if self.sdk and position.condition_id:
+        if self.clob_client and position.condition_id:
             try:
-                ticker = await self.sdk.clob_api.get_ticker(position.condition_id)
-                current_price = Decimal(str(ticker.get("price", 0)))
-                position.current_price = current_price
+                # 先从 Gamma API 获取 token_id
+                token_id = await self._get_token_id(position.condition_id, position.side)
+                if token_id:
+                    from py_clob_client.order_builder.constants import BUY, SELL
+                    # 获取当前价格（py-clob-client 是同步的）
+                    side = BUY if position.side == "yes" else SELL
+                    price_data = await asyncio.to_thread(
+                        self.clob_client.get_price, token_id, side
+                    )
+                    price_val = price_data if isinstance(price_data, (int, float)) else price_data.get("price", 0)
+                    current_price = Decimal(str(price_val))
+                    position.current_price = current_price
             except Exception as e:
                 print(f"Failed to get price: {e}")
 
@@ -137,6 +149,28 @@ class PositionMonitor:
             ):
                 await self._close_position(db, position, "stop_loss")
 
+    async def _get_token_id(self, condition_id: str, side: str) -> Optional[str]:
+        """从 Gamma API 获取指定 outcome 的 token_id."""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"https://gamma-api.polymarket.com/markets/{condition_id}",
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                market = resp.json()
+
+            for token in market.get("tokens", []):
+                if token.get("outcome", "").lower() == side.lower():
+                    return token.get("token_id")
+
+            clob_ids = market.get("clob_token_ids", {})
+            if isinstance(clob_ids, dict):
+                return clob_ids.get(side.lower())
+        except Exception as e:
+            print(f"Failed to get token_id from Gamma API: {e}")
+        return None
+
     async def _close_position(
         self,
         db: AsyncSession,
@@ -144,17 +178,114 @@ class PositionMonitor:
         close_reason: str,
     ) -> None:
         """Close a position due to stop-loss or take-profit."""
-        # TODO: 实现平仓订单
-        # 1. 获取当前价格
-        # 2. 创建卖出订单（与开仓方向相反）
-        # 3. 调用 Polymarket API
-        # 4. 更新 Position 状态
+        from src.models.order import Order
+        from src.models.wallet import Wallet
+        from src.models.signal_log import SignalLog
+        from uuid import UUID
 
         print(f"Closing position {position.id} due to {close_reason}")
 
-        # 标记为关闭（实际实现需要完善）
-        # position.status = "closed"
-        # await db.commit()
+        if not self.clob_client:
+            print("ClobClient not initialized, cannot close position")
+            return
+
+        try:
+            # 获取当前价格
+            current_price = position.current_price
+            if position.condition_id:
+                token_id = await self._get_token_id(position.condition_id, position.side)
+                if token_id:
+                    from py_clob_client.order_builder.constants import BUY, SELL
+                    side = BUY if position.side == "yes" else SELL
+                    price_data = await asyncio.to_thread(
+                        self.clob_client.get_price, token_id, side
+                    )
+                    price_val = price_data if isinstance(price_data, (int, float)) else price_data.get("price", 0)
+                    current_price = Decimal(str(price_val))
+
+            if not current_price:
+                print("Cannot get current price, skipping close")
+                return
+
+            # 计算平仓数量 (与开仓相同)
+            size = position.size
+            if not size or size <= 0:
+                print("Invalid position size, skipping close")
+                return
+
+            # 确定平仓方向 (与开仓相反)
+            close_side = "no" if position.side == "yes" else "yes"
+
+            # 获取 token_id
+            token_id = None
+            if position.market_id:
+                token_id = await self._get_token_id(position.market_id, close_side)
+
+            if not token_id:
+                print(f"Cannot find token_id for market {position.market_id}")
+                # 仍然标记为关闭
+                position.status = "closed"
+                position.closed_at = datetime.utcnow()
+                position.close_reason = close_reason
+                await db.commit()
+                return
+
+            # 创建平仓订单
+            order = Order(
+                id=UUID(),
+                user_id=position.user_id,
+                portfolio_id=position.portfolio_id,
+                strategy_id=position.strategy_id,
+                position_id=position.id,
+                order_type="sell" if position.side == "yes" else "buy",
+                side=close_side,
+                token_id=token_id,
+                market_id=position.market_id,
+                size=size,
+                price=current_price,
+                status="pending",
+                filled_size=Decimal("0"),
+                filled_price=Decimal("0"),
+                fees=Decimal("0"),
+            )
+            db.add(order)
+
+            # 更新 Position 状态
+            position.status = "closed"
+            position.closed_at = datetime.utcnow()
+            position.close_reason = close_reason
+            position.close_price = current_price
+
+            # 计算盈亏
+            if position.side == "yes":
+                # 买入 Yes: 盈利 = (平仓价 - 开仓价) * 数量
+                pnl = (current_price - position.entry_price) * size
+            else:
+                # 买入 No: 盈利 = (开仓价 - 平仓价) * 数量
+                pnl = (position.entry_price - current_price) * size
+
+            position.pnl = pnl
+
+            # 更新相关的 SignalLog
+            if position.signal_id:
+                result = await db.execute(
+                    select(SignalLog).where(SignalLog.signal_id == position.signal_id)
+                )
+                signal = result.scalar_one_or_none()
+                if signal:
+                    signal.status = "executed"
+                    signal.executed_at = datetime.utcnow()
+                    signal.execution_price = current_price
+                    signal.execution_size = size
+                    signal.was_profitable = pnl > 0
+                    signal.actual_outcome = close_reason
+
+            await db.commit()
+            print(f"Position {position.id} closed: {close_reason}, PnL: {pnl}")
+
+        except Exception as e:
+            print(f"Error closing position: {e}")
+            await db.rollback()
 
 
 # 全局实例

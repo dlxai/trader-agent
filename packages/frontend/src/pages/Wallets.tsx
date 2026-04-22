@@ -41,11 +41,17 @@ function WalletCard({
   onTest,
   onSetDefault,
   onDelete,
+  isTesting,
+  isSettingDefault,
+  isDeleting,
 }: {
   wallet: WalletType
   onTest: (id: string) => void
   onSetDefault: (id: string) => void
   onDelete: (id: string) => void
+  isTesting: boolean
+  isSettingDefault: boolean
+  isDeleting: boolean
 }) {
   const status = statusConfig[wallet.status]
   const StatusIcon = status.icon
@@ -107,19 +113,28 @@ function WalletCard({
             variant="outline"
             size="sm"
             onClick={() => onTest(wallet.id)}
-            disabled={wallet.status === 'error'}
+            disabled={isTesting}
           >
-            <CheckCircle2 className="mr-2 h-3 w-3" />
-            Test
+            {isTesting ? (
+              <span className="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : (
+              <CheckCircle2 className="mr-2 h-3 w-3" />
+            )}
+            {isTesting ? 'Testing...' : 'Test'}
           </Button>
           {!wallet.is_default && (
             <Button
               variant="outline"
               size="sm"
               onClick={() => onSetDefault(wallet.id)}
+              disabled={isSettingDefault}
             >
-              <Settings className="mr-2 h-3 w-3" />
-              Set Default
+              {isSettingDefault ? (
+                <span className="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+              ) : (
+                <Settings className="mr-2 h-3 w-3" />
+              )}
+              {isSettingDefault ? 'Updating...' : 'Set Default'}
             </Button>
           )}
           <div className="flex-1" />
@@ -128,9 +143,14 @@ function WalletCard({
             size="sm"
             className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
             onClick={() => onDelete(wallet.id)}
+            disabled={isDeleting}
           >
-            <Trash2 className="mr-2 h-3 w-3" />
-            Delete
+            {isDeleting ? (
+              <span className="mr-2 h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            ) : (
+              <Trash2 className="mr-2 h-3 w-3" />
+            )}
+            {isDeleting ? 'Deleting...' : 'Delete'}
           </Button>
         </div>
       </CardContent>
@@ -141,45 +161,45 @@ function WalletCard({
 function CreateWalletDialog({
   open,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  onCreated: (wallet: WalletType) => void
 }) {
   const [name, setName] = useState('')
   const [privateKey, setPrivateKey] = useState('')
   const [proxyWalletAddress, setProxyWalletAddress] = useState('')
   const [showPrivateKey, setShowPrivateKey] = useState(false)
   const [isDefault, setIsDefault] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
   const queryClient = useQueryClient()
   const { toast } = useToast()
 
   const createMutation = useMutation({
     mutationFn: (data: CreateWalletRequest) => walletsApi.create(data),
-    onSuccess: () => {
+    onSuccess: (wallet: WalletType) => {
       queryClient.invalidateQueries({ queryKey: ['wallets'] })
-      toast({ title: 'Wallet created successfully' })
+      toast({ title: 'Wallet created successfully', description: 'Fetching balance...' })
       setName('')
       setPrivateKey('')
       setProxyWalletAddress('')
       onOpenChange(false)
+      // Auto-test after creation
+      onCreated(wallet)
     },
     onError: (error: Error) => {
       toast({ title: 'Failed to create wallet', description: error.message, variant: 'destructive' })
     },
   })
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    setIsSubmitting(true)
     createMutation.mutate({
       name,
       private_key: privateKey,
       proxy_wallet_address: proxyWalletAddress || undefined,
       is_default: isDefault,
     })
-    setIsSubmitting(false)
   }
 
   return (
@@ -253,8 +273,8 @@ function CreateWalletDialog({
             <Button variant="outline" type="button" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Creating...' : 'Create Wallet'}
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? 'Creating...' : 'Create Wallet'}
             </Button>
           </DialogFooter>
         </form>
@@ -280,8 +300,11 @@ export default function WalletsPage() {
       if (data.success) {
         toast({ title: 'Connection successful', description: `Balance: ${data.balance} USDC` })
       } else {
-        toast({ title: 'Connection failed', description: data.error, variant: 'destructive' })
+        toast({ title: 'Connection failed', description: data.error || data.message, variant: 'destructive' })
       }
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Connection failed', description: error.message, variant: 'destructive' })
     },
   })
 
@@ -291,6 +314,9 @@ export default function WalletsPage() {
       queryClient.invalidateQueries({ queryKey: ['wallets'] })
       toast({ title: 'Default wallet updated' })
     },
+    onError: (error: Error) => {
+      toast({ title: 'Failed to update default', description: error.message, variant: 'destructive' })
+    },
   })
 
   const deleteMutation = useMutation({
@@ -298,6 +324,9 @@ export default function WalletsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wallets'] })
       toast({ title: 'Wallet deleted' })
+    },
+    onError: (error: Error) => {
+      toast({ title: 'Failed to delete wallet', description: error.message, variant: 'destructive' })
     },
   })
 
@@ -331,6 +360,9 @@ export default function WalletsPage() {
               onTest={(id) => testMutation.mutate(id)}
               onSetDefault={(id) => setDefaultMutation.mutate(id)}
               onDelete={(id) => deleteMutation.mutate(id)}
+              isTesting={testMutation.isPending && testMutation.variables === wallet.id}
+              isSettingDefault={setDefaultMutation.isPending && setDefaultMutation.variables === wallet.id}
+              isDeleting={deleteMutation.isPending && deleteMutation.variables === wallet.id}
             />
           ))}
         </div>
@@ -356,6 +388,7 @@ export default function WalletsPage() {
       <CreateWalletDialog
         open={isCreateDialogOpen}
         onOpenChange={setIsCreateDialogOpen}
+        onCreated={(wallet) => testMutation.mutate(wallet.id)}
       />
     </div>
   )

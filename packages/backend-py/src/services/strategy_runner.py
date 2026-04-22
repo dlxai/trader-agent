@@ -38,6 +38,14 @@ class StrategyRunner:
         if strategy_id in self._tasks:
             return  # Already running
 
+        # Initialize SDK if not already done
+        if not self.sdk:
+            try:
+                self.sdk = await PolymarketSDK.create()
+            except Exception as e:
+                print(f"Failed to initialize Polymarket SDK: {e}")
+                raise
+
         # Get strategy and portfolio info from database
         async with AsyncSessionLocal() as db:
             result = await db.execute(
@@ -50,8 +58,7 @@ class StrategyRunner:
         # Get or create shared data source
         data_source = await self._data_source_manager.get_or_create_source(
             portfolio_id=strategy.portfolio_id,
-            source_type="polymarket",
-            proxy_url="http://127.0.0.1:7890"
+            source_type="polymarket"
         )
 
         task = asyncio.create_task(self._run_strategy_loop(strategy_id, data_source))

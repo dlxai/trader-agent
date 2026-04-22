@@ -201,7 +201,7 @@ export default function StrategiesPage() {
     queryFn: () => providersApi.getAll(),
   })
 
-  const providers = providersResponse?.items || []
+  const providers = providersResponse || []
 
   const { data: strategiesResponse, isLoading } = useQuery({
     queryKey: ['strategies'],
@@ -254,10 +254,29 @@ export default function StrategiesPage() {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
-    // Merge basic info with config
+    // Flatten config for backend API
     const strategyData = {
       ...newStrategy,
-      ...config,
+      // Data sources
+      data_sources: config.data_sources,
+      // Trigger
+      trigger: config.trigger,
+      // Filters
+      filters: config.filters,
+      // Position monitor
+      position_monitor: config.position_monitor,
+      // Order config (flat)
+      min_order_size: config.order.min_order_size,
+      max_order_size: config.order.max_order_size,
+      default_amount: config.order.default_amount,
+      // Risk config (flat)
+      max_open_positions: config.risk.max_positions,
+      min_risk_reward_ratio: config.risk.min_risk_reward_ratio,
+      max_margin_usage: config.risk.max_margin_usage,
+      min_position_size: config.risk.min_position_size,
+      // AI prompts
+      system_prompt: config.system_prompt,
+      custom_prompt: config.custom_prompt,
     }
     createMutation.mutate(strategyData)
   }

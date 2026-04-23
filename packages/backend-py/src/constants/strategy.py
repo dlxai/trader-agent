@@ -66,8 +66,8 @@ DEFAULT_STRATEGY_CONFIG: Dict[str, Any] = {
         "max_spread": 3,
         "max_slippage": 2,
         "dead_zone_enabled": True,
-        "dead_zone_min": 0.70,
-        "dead_zone_max": 0.80,
+        "dead_zone_min": 0.60,
+        "dead_zone_max": 0.85,
         "keywords_exclude": ["o/u", "spread"],
     },
     "order": {

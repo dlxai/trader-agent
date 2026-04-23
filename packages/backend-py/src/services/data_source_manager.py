@@ -20,6 +20,7 @@ if _strategy_py_src not in sys.path:
 from strategy.price_monitor import PriceMonitor
 from strategy.activity_analyzer import ActivityAnalyzer
 from strategy.sports_monitor import SportsMarketMonitor
+from strategy.realtime_service import RealtimeService
 
 
 @dataclass
@@ -108,7 +109,8 @@ class PolymarketDataSource(DataSource):
         # WebSocket 组件
         self._price_monitor: Optional[PriceMonitor] = None
         self._activity_analyzer: Optional[ActivityAnalyzer] = None
-        self._sports_monitor: Optional[SportsMonitor] = None
+        self._sports_monitor: Optional[SportsMarketMonitor] = None
+        self._realtime_service: Optional[RealtimeService] = None
 
         # 订阅的 token 列表
         self._subscribed_tokens: set = set()
@@ -121,17 +123,59 @@ class PolymarketDataSource(DataSource):
         """Start all WebSocket connections"""
         self._running = True
 
-        # 启动价格监控
+        # 启动价格监控 (持仓 token 价格)
         self._price_monitor = PriceMonitor(proxy_url=self._proxy_url)
         await self._price_monitor.start()
 
-        # 启动 Activity 分析器
+        # 启动 Activity 分析器 (纯数据分析器，无需 start)
         self._activity_analyzer = ActivityAnalyzer()
-        await self._activity_analyzer.start()
+
+        # 启动 RealtimeService 订阅全市场交易活动，喂给 ActivityAnalyzer
+        self._realtime_service = RealtimeService(proxy=self._proxy_url)
+        await self._realtime_service.connect()
+        # 注册 trade 事件处理器，转发给 ActivityAnalyzer
+        self._realtime_service.on("trade", self._on_realtime_trade)
+        self._realtime_service.on("activity_trade", self._on_activity_trade)
+        # 订阅全市场交易活动
+        await self._realtime_service.subscribe_all_activity()
 
         # 启动 Sports 比分监控
-        self._sports_monitor = SportsMonitor(proxy_url=self._proxy_url)
+        self._sports_monitor = SportsMarketMonitor(proxy_url=self._proxy_url)
         await self._sports_monitor.start()
+
+    def _on_realtime_trade(self, trade: Dict[str, Any]) -> None:
+        """Handle trade from RealtimeService, forward to ActivityAnalyzer."""
+        if not self._activity_analyzer:
+            return
+        # Adapt RealtimeService trade format to ActivityAnalyzer format
+        adapted = {
+            "condition_id": trade.get("market_id") or trade.get("conditionId") or trade.get("asset_id", ""),
+            "slug": "",
+            "title": "",
+            "trader_address": trade.get("trader_address", ""),
+            "amount": trade.get("size", 0),
+            "side": trade.get("side", "BUY").upper(),
+            "outcome": "YES" if trade.get("side", "").lower() == "buy" else "NO",
+            "price": trade.get("price", 0.5),
+        }
+        self._activity_analyzer.process_trade(adapted)
+
+    def _on_activity_trade(self, payload: Dict[str, Any]) -> None:
+        """Handle activity trade from Live Data WebSocket."""
+        if not self._activity_analyzer:
+            return
+        # Live Data activity format uses camelCase conditionId
+        adapted = {
+            "condition_id": payload.get("conditionId") or payload.get("market_id") or payload.get("condition_id", ""),
+            "slug": payload.get("slug", ""),
+            "title": payload.get("title", ""),
+            "trader_address": payload.get("trader_address", ""),
+            "amount": payload.get("amount") or payload.get("size", 0),
+            "side": (payload.get("side") or "BUY").upper(),
+            "outcome": payload.get("outcome", "YES"),
+            "price": payload.get("price", 0.5),
+        }
+        self._activity_analyzer.process_trade(adapted)
 
     async def stop(self) -> None:
         """Stop all WebSocket connections"""
@@ -140,8 +184,8 @@ class PolymarketDataSource(DataSource):
         if self._price_monitor:
             await self._price_monitor.stop()
 
-        if self._activity_analyzer:
-            await self._activity_analyzer.stop()
+        if self._realtime_service:
+            await self._realtime_service.close()
 
         if self._sports_monitor:
             await self._sports_monitor.stop()
@@ -161,6 +205,95 @@ class PolymarketDataSource(DataSource):
             if self._price_monitor:
                 await self._price_monitor.unsubscribe_token(token_id)
             self._subscribed_tokens.discard(token_id)
+
+    def register_sports_position(
+        self,
+        position_id: str,
+        market_id: str,
+        entry_price: float,
+        stop_loss_pct: float = 0.10,
+        game_id: Optional[str] = None,
+        side: str = "yes",
+    ) -> None:
+        """Register a sports market position for dynamic stop-loss via score events.
+
+        SportsMarketMonitor will listen for score updates (goals, red cards, etc.)
+        and dynamically tighten stop-loss when adverse events occur.
+
+        Args:
+            game_id: Polymarket sports game ID (used to match WebSocket score updates).
+                     Required because the sports WS feed uses gameId, not market conditionId.
+            side: Position direction ("yes" or "no").
+        """
+        if self._sports_monitor:
+            self._sports_monitor.add_position_monitoring(
+                position_id=position_id,
+                market_id=market_id,
+                game_id=game_id,
+                entry_price=entry_price,
+                original_stop_loss=stop_loss_pct,
+                side=side,
+            )
+
+    def unregister_sports_position(self, position_id: str) -> None:
+        """Remove a sports market position from dynamic monitoring."""
+        if self._sports_monitor:
+            self._sports_monitor.remove_position_monitoring(position_id)
+
+    def get_combined_sports_exit_signal(
+        self, position_id: str, market_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Combined sports score + activity flow exit signal.
+
+        SportsMonitor detects score events (goals, red cards, etc.) and adjusts
+        stop-loss. This method combines that with ActivityAnalyzer flow data
+        to decide: exit immediately, exit, or hold with tighter stop-loss.
+        """
+        if not self._sports_monitor:
+            return None
+
+        # 1. Check if sports monitor has adjusted stop-loss for this position
+        dyn_sl = self._sports_monitor._dynamic_stop_loss.get(position_id)
+        if not dyn_sl or not dyn_sl.adjustment_history:
+            return None
+
+        last_adj = dyn_sl.adjustment_history[-1]
+        # Only care about recent adjustments (within last 60 seconds)
+        from datetime import datetime
+        adj_time = datetime.fromisoformat(last_adj["timestamp"])
+        if (datetime.utcnow() - adj_time).total_seconds() > 60:
+            return None
+
+        # 2. Get flow data from ActivityAnalyzer
+        flow = 0
+        if self._activity_analyzer:
+            ma = self._activity_analyzer.get_market_by_condition(market_id)
+            if ma:
+                flow = ma.net_flow
+
+        # 3. Combined decision
+        if last_adj["new_stop_loss"] < last_adj["old_stop_loss"]:
+            # Stop-loss tightened by sports event
+            if flow < -2000:
+                # Large outflow confirms bad news → exit immediately
+                return {
+                    "action": "exit_immediately",
+                    "reason": f"sports_event: {last_adj['reason']} + heavy_outflow({flow:.0f})",
+                }
+            elif flow < -500:
+                # Moderate outflow → exit
+                return {
+                    "action": "exit",
+                    "reason": f"sports_event: {last_adj['reason']} + outflow({flow:.0f})",
+                }
+            else:
+                # Inflow or neutral → hold but respect tightened SL
+                return {
+                    "action": "hold",
+                    "reason": f"sports_event: {last_adj['reason']} + flow_buffer({flow:.0f})",
+                }
+
+        return None
 
     async def get_market_data(self, token_id: str, fallback_timeout: int = 10) -> Optional[MarketData]:
         """Get market data from price monitor (WebSocket优先，HTTP fallback)
@@ -221,15 +354,28 @@ class PolymarketDataSource(DataSource):
         return None
 
     async def get_activity(self, token_id: str) -> Optional[ActivityData]:
-        """Get activity data from analyzer"""
+        """Get activity data from analyzer cache."""
         if not self._activity_analyzer:
             return None
 
-        # ActivityAnalyzer 有 get_recent_activities 方法
-        activities = self._activity_analyzer.get_recent_activities(minutes=5)
-        # 简化处理
+        # Look up condition_id from token_id mapping
+        condition_id = self._token_to_condition.get(token_id, token_id)
+
+        # Get MarketActivity from ActivityAnalyzer cache
+        ma = self._activity_analyzer.get_market_by_condition(condition_id)
+        if ma:
+            return ActivityData(
+                market_id=condition_id,
+                netflow=ma.net_flow,
+                buy_volume=ma.yes_volume,
+                sell_volume=ma.no_volume,
+                unique_traders=ma.trader_count,
+                timestamp=datetime.utcnow()
+            )
+
+        # Fallback: empty data
         return ActivityData(
-            market_id=token_id,
+            market_id=condition_id,
             netflow=0,
             buy_volume=0,
             sell_volume=0,
@@ -242,9 +388,19 @@ class PolymarketDataSource(DataSource):
         if not self._sports_monitor:
             return None
 
-        # 需要从 sports_monitor 获取比分
-        # 简化处理
-        return None
+        score_state = self._sports_monitor._score_cache.get(token_id)
+        if not score_state:
+            return None
+
+        return SportsScoreData(
+            market_id=token_id,
+            home_team=score_state.home_team,
+            away_team=score_state.away_team,
+            home_score=score_state.home_score,
+            away_score=score_state.away_score,
+            period=score_state.game_status,
+            timestamp=score_state.last_updated,
+        )
 
 
 class SignalFilter:
@@ -257,8 +413,8 @@ class SignalFilter:
         self.max_spread = filters.get('max_spread', 3)
         self.max_slippage = filters.get('max_slippage', 2)
         self.dead_zone_enabled = filters.get('dead_zone_enabled', True)
-        self.dead_zone_min = filters.get('dead_zone_min', 0.70)
-        self.dead_zone_max = filters.get('dead_zone_max', 0.80)
+        self.dead_zone_min = filters.get('dead_zone_min', 0.60)
+        self.dead_zone_max = filters.get('dead_zone_max', 0.85)
         self.keywords_exclude = filters.get('keywords_exclude', ['o/u', 'spread'])
         self.max_hours_to_expiry = filters.get('max_hours_to_expiry', 6)
 
@@ -295,11 +451,12 @@ class TriggerChecker:
     """Trigger condition checker using StrategyTrigger configuration"""
 
     # 分层净流入阈值（来自 polymarket-agent）
+    # 注意：Stage 阈值必须避开死亡区间 (0.60-0.85)
     STAGE_THRESHOLDS = [
         {'min_price': 0.95, 'max_price': 0.999, 'netflow': 2000},   # Stage1: 高概率
         {'min_price': 0.90, 'max_price': 0.95, 'netflow': 1000},    # Stage2
-        {'min_price': 0.80, 'max_price': 0.90, 'netflow': 10000},   # Stage3
-        {'min_price': 0.70, 'max_price': 0.80, 'netflow': 4000},    # Stage4
+        {'min_price': 0.85, 'max_price': 0.90, 'netflow': 10000},   # Stage3: min 改为 0.85 避开死亡区间
+        # Stage4 (0.70-0.80) 已删除 - 完全在死亡区间内，死代码
     ]
 
     def __init__(self, trigger: Dict[str, Any], last_trigger_time: Optional[datetime] = None):

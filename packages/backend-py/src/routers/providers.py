@@ -57,6 +57,90 @@ async def get_provider_types():
     )
 
 
+@router.post("/fetch-models", response_model=ApiResponse[list])
+async def fetch_models_direct(
+    api_base: str,
+    api_key: str,
+    provider_type: str = "openai",
+    current_user: User = Depends(get_current_active_user),
+):
+    """Fetch available models directly from provider API (without saving provider first)."""
+    import httpx
+
+    headers = {}
+    if provider_type == "anthropic":
+        headers["x-api-key"] = api_key
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{api_base.rstrip('/')}/models",
+                headers=headers,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        models = []
+        if isinstance(data, dict) and "data" in data:
+            models = [item["id"] for item in data["data"] if "id" in item]
+        elif isinstance(data, list):
+            models = [item["id"] if isinstance(item, dict) else item for item in data]
+
+        return ApiResponse(success=True, data=models)
+    except httpx.HTTPStatusError as e:
+        return ApiResponse(success=False, data=[], error={"message": f"HTTP error: {e.response.status_code}"})
+    except Exception as e:
+        return ApiResponse(success=False, data=[], error={"message": str(e)})
+
+
+@router.post("/default/{provider_id}/set", response_model=ApiResponse[ProviderResponse])
+async def set_default_provider(
+    provider_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """Set a provider as the default."""
+    result = await db.execute(
+        select(Provider).where(
+            and_(
+                Provider.id == provider_id,
+                Provider.user_id == current_user.id,
+            )
+        )
+    )
+    provider = result.scalar_one_or_none()
+
+    if not provider:
+        from src.core.exceptions import NotFoundError
+        raise NotFoundError("Provider not found")
+
+    # Unset other defaults
+    all_result = await db.execute(
+        select(Provider).where(
+            and_(
+                Provider.user_id == current_user.id,
+                Provider.is_default == True,
+                Provider.id != provider_id,
+            )
+        )
+    )
+    for p in all_result.scalars().all():
+        p.is_default = False
+
+    # Set this as default
+    provider.is_default = True
+    await db.commit()
+    await db.refresh(provider)
+
+    return ApiResponse(
+        success=True,
+        data=ProviderResponse.model_validate(provider),
+        message="Default provider set successfully",
+    )
+
+
 @router.post("", response_model=ApiResponse[ProviderResponse], status_code=status.HTTP_201_CREATED)
 async def create_provider(
     request: ProviderCreate,
@@ -131,6 +215,7 @@ async def get_provider(
 
 
 @router.put("/{provider_id}", response_model=ApiResponse[ProviderResponse])
+@router.patch("/{provider_id}", response_model=ApiResponse[ProviderResponse])
 async def update_provider(
     provider_id: UUID,
     request: ProviderUpdate,
@@ -347,85 +432,3 @@ async def get_provider_models(
         return ApiResponse(success=False, data=[], message=str(e))
 
 
-@router.post("/fetch-models", response_model=ApiResponse[list])
-async def fetch_models_direct(
-    api_base: str,
-    api_key: str,
-    provider_type: str = "openai",
-    current_user: User = Depends(get_current_active_user),
-):
-    """Fetch available models directly from provider API (without saving provider first)."""
-    import httpx
-
-    headers = {}
-    if provider_type == "anthropic":
-        headers["x-api-key"] = api_key
-    else:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{api_base.rstrip('/')}/models",
-                headers=headers,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        models = []
-        if isinstance(data, dict) and "data" in data:
-            models = [item["id"] for item in data["data"] if "id" in item]
-        elif isinstance(data, list):
-            models = [item["id"] if isinstance(item, dict) else item for item in data]
-
-        return ApiResponse(success=True, data=models)
-    except httpx.HTTPStatusError as e:
-        return ApiResponse(success=False, data=[], error={"message": f"HTTP error: {e.response.status_code}"})
-    except Exception as e:
-        return ApiResponse(success=False, data=[], error={"message": str(e)})
-
-
-@router.post("/default/{provider_id}/set", response_model=ApiResponse[ProviderResponse])
-async def set_default_provider(
-    provider_id: UUID,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_async_session),
-):
-    """Set a provider as the default."""
-    result = await db.execute(
-        select(Provider).where(
-            and_(
-                Provider.id == provider_id,
-                Provider.user_id == current_user.id,
-            )
-        )
-    )
-    provider = result.scalar_one_or_none()
-
-    if not provider:
-        from src.core.exceptions import NotFoundError
-        raise NotFoundError("Provider not found")
-
-    # Unset other defaults
-    all_result = await db.execute(
-        select(Provider).where(
-            and_(
-                Provider.user_id == current_user.id,
-                Provider.is_default == True,
-                Provider.id != provider_id,
-            )
-        )
-    )
-    for p in all_result.scalars().all():
-        p.is_default = False
-
-    # Set this as default
-    provider.is_default = True
-    await db.commit()
-    await db.refresh(provider)
-
-    return ApiResponse(
-        success=True,
-        data=ProviderResponse.model_validate(provider),
-        message="Default provider set successfully",
-    )

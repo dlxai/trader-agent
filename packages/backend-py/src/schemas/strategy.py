@@ -308,8 +308,8 @@ class StrategyFilters(BaseSchema):
     max_spread: Decimal = Field(default=Decimal("3"), ge=0, le=100)
     max_slippage: Decimal = Field(default=Decimal("2"), ge=0, le=100)
     dead_zone_enabled: bool = Field(default=True)
-    dead_zone_min: Decimal = Field(default=Decimal("0.70"), ge=0, le=1)
-    dead_zone_max: Decimal = Field(default=Decimal("0.80"), ge=0, le=1)
+    dead_zone_min: Decimal = Field(default=Decimal("0.60"), ge=0, le=1)
+    dead_zone_max: Decimal = Field(default=Decimal("0.85"), ge=0, le=1)
     keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
 
     # 到期时间过滤（来自 polymarket-agent）

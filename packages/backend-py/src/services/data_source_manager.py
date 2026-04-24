@@ -5,7 +5,7 @@ import logging
 import sys
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Callable
 from uuid import UUID
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -132,6 +132,9 @@ class PolymarketDataSource(DataSource):
         # 市场元数据缓存（token_id -> market dict，用于计算 hours_to_expiry 等）
         self._market_meta_cache: Dict[str, Dict[str, Any]] = {}
 
+        # 市场双窗口触发处理器（condition_id, trigger_data）
+        self._market_trigger_handlers: List[Callable[[str, Dict[str, Any]], None]] = []
+
     @property
     def source_type(self) -> str:
         return "polymarket"
@@ -154,6 +157,10 @@ class PolymarketDataSource(DataSource):
 
         # 2. 启动 Activity 分析器 (纯数据分析器，无需 start)
         self._activity_analyzer = ActivityAnalyzer()
+        # 注册双窗口确认触发回调（同步回调内创建异步任务）
+        self._activity_analyzer.on_dual_window_trigger(
+            lambda cid, td: asyncio.create_task(self._on_dual_window_trigger(cid, td))
+        )
         logger.info("PolymarketDataSource: ActivityAnalyzer initialized")
 
         # 3. 启动 RealtimeService 订阅全市场交易活动
@@ -236,26 +243,16 @@ class PolymarketDataSource(DataSource):
         logger.info("PolymarketDataSource: all components stopped")
 
     async def subscribe(self, token_ids: List[str]) -> None:
-        """Subscribe to market updates"""
-        # 订阅新的 tokens
+        """Subscribe to market updates (additive — does NOT unsubscribe existing)."""
         new_tokens = set(token_ids) - self._subscribed_tokens
-        if new_tokens:
-            logger.info("PolymarketDataSource: subscribing %d new tokens", len(new_tokens))
+        if not new_tokens:
+            return
+        logger.info("PolymarketDataSource: subscribing %d new tokens", len(new_tokens))
         for token_id in new_tokens:
             if self._price_monitor:
                 await self._price_monitor.subscribe_token(token_id)
             self._subscribed_tokens.add(token_id)
-
-        # 取消订阅不再需要的 tokens
-        old_tokens = self._subscribed_tokens - set(token_ids)
-        if old_tokens:
-            logger.info("PolymarketDataSource: unsubscribing %d old tokens", len(old_tokens))
-        for token_id in old_tokens:
-            if self._price_monitor:
-                await self._price_monitor.unsubscribe_token(token_id)
-            self._subscribed_tokens.discard(token_id)
-
-        logger.debug("PolymarketDataSource: total subscribed tokens = %d", len(self._subscribed_tokens))
+        logger.info("PolymarketDataSource: total subscribed tokens = %d", len(self._subscribed_tokens))
 
     def update_market_meta(self, token_id: str, market_meta: Dict[str, Any]) -> None:
         """Cache market metadata (endDate, condition_id, etc.) for expiry calculation.
@@ -374,6 +371,34 @@ class PolymarketDataSource(DataSource):
                 }
 
         return None
+
+    def register_market_trigger_handler(self, handler: Callable[[str, Dict[str, Any]], None]) -> None:
+        """注册市场双窗口触发处理器。
+
+        当 ActivityAnalyzer 的双窗口确认触发时，会调用所有已注册的 handler。
+        Handler 签名: (condition_id: str, trigger_data: dict) -> None
+        若 handler 内需要执行异步操作，请自行 asyncio.create_task()。
+        """
+        self._market_trigger_handlers.append(handler)
+
+    def unregister_market_trigger_handler(self, handler: Callable[[str, Dict[str, Any]], None]) -> None:
+        """注销市场双窗口触发处理器。"""
+        if handler in self._market_trigger_handlers:
+            self._market_trigger_handlers.remove(handler)
+
+    async def _on_dual_window_trigger(self, condition_id: str, trigger_data: Dict[str, Any]) -> None:
+        """转发 ActivityAnalyzer 的双窗口触发事件到所有注册处理器。"""
+        logger.info(
+            "PolymarketDataSource: dual-window trigger for %s short_netflow=%.2f long_netflow=%.2f",
+            condition_id,
+            trigger_data.get("short_window", {}).get("net_flow", 0),
+            trigger_data.get("long_window", {}).get("net_flow", 0),
+        )
+        for handler in self._market_trigger_handlers:
+            try:
+                handler(condition_id, trigger_data)
+            except Exception as e:
+                logger.error("Market trigger handler error: %s", e)
 
     async def get_market_data(self, token_id: str, fallback_timeout: int = 10) -> Optional[MarketData]:
         """Get market data from price monitor (WebSocket优先，HTTP fallback)

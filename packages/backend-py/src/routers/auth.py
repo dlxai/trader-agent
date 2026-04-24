@@ -35,7 +35,7 @@ security = HTTPBearer(auto_error=False)
 
 @router.post(
     "/register",
-    response_model=ApiResponse[UserResponse],
+    response_model=ApiResponse[TokenResponse],
     status_code=status.HTTP_201_CREATED,
 )
 async def register(

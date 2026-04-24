@@ -1,6 +1,7 @@
 """User routes."""
 
 import json
+import os
 import httpx
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
@@ -12,6 +13,8 @@ from src.models.user import User
 from src.schemas.user import UserResponse, UserUpdate, UserPreferences, UserPreferencesUpdate, AIModelConfig
 from src.schemas.base import ApiResponse
 from src.dependencies import get_current_user, get_current_active_user
+
+_PROXY_URL = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -38,7 +41,7 @@ def mask_token(token: str) -> str:
 async def send_telegram_message(bot_token: str, chat_id: str, message: str) -> bool:
     """Send message via Telegram Bot API."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(proxy=_PROXY_URL) as client:
         try:
             response = await client.post(url, json={
                 "chat_id": chat_id,
@@ -266,7 +269,7 @@ async def configure_telegram(
 ):
     """配置 Telegram 通知"""
     # 验证 token 是否有效 - 尝试获取 bot info
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(proxy=_PROXY_URL) as client:
         try:
             response = await client.get(f"https://api.telegram.org/bot{config.bot_token}/getMe")
             if response.status_code != 200:

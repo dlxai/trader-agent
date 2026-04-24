@@ -284,6 +284,7 @@ class StrategySummary(BaseSchema):
     type: str
     is_active: bool
     status: str
+    portfolio_id: Optional[UUID] = None
     provider_id: Optional[UUID] = None
     min_order_size: Decimal
     max_order_size: Decimal
@@ -303,37 +304,37 @@ class StrategyListResponse(PaginatedResponse[StrategySummary]):
 class StrategyFilters(BaseSchema):
     """Signal filtering configuration."""
     min_confidence: int = Field(default=40, ge=0, le=100)
-    min_price: Decimal = Field(default=Decimal("0.50"), ge=0, le=1)
-    max_price: Decimal = Field(default=Decimal("0.99"), ge=0, le=1)
-    max_spread: Decimal = Field(default=Decimal("3"), ge=0, le=100)
-    max_slippage: Decimal = Field(default=Decimal("2"), ge=0, le=100)
+    min_price: float = Field(default=0.50, ge=0, le=1)
+    max_price: float = Field(default=0.99, ge=0, le=1)
+    max_spread: float = Field(default=3.0, ge=0, le=100)
+    max_slippage: float = Field(default=2.0, ge=0, le=100)
     dead_zone_enabled: bool = Field(default=True)
-    dead_zone_min: Decimal = Field(default=Decimal("0.60"), ge=0, le=1)
-    dead_zone_max: Decimal = Field(default=Decimal("0.85"), ge=0, le=1)
+    dead_zone_min: float = Field(default=0.60, ge=0, le=1)
+    dead_zone_max: float = Field(default=0.85, ge=0, le=1)
     keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
 
     # 到期时间过滤（来自 polymarket-agent）
     # 超过这个小时数的市场不交易
     # 通用策略：6（超过6小时忽略）
     # 尾盘策略：2（超过2小时忽略）
-    max_hours_to_expiry: Decimal = Field(default=Decimal("6"))
+    max_hours_to_expiry: float = Field(default=6.0)
 
 
 class StrategyPositionMonitor(BaseSchema):
     """Position monitoring configuration."""
     enable_stop_loss: bool = Field(default=True)
-    stop_loss_percent: Decimal = Field(default=Decimal("-15"), le=0)
+    stop_loss_percent: float = Field(default=-15.0, le=0)
     enable_take_profit: bool = Field(default=True)
-    take_profit_price: Decimal = Field(default=Decimal("0.999"), ge=0, le=1)
+    take_profit_price: float = Field(default=0.999, ge=0, le=1)
     enable_trailing_stop: bool = Field(default=True)
-    trailing_stop_percent: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+    trailing_stop_percent: float = Field(default=5.0, ge=0, le=100)
     enable_auto_redeem: bool = Field(default=True)
 
 
 class StrategyTrigger(BaseSchema):
     """Trigger configuration."""
-    price_change_threshold: Decimal = Field(default=Decimal("5"), ge=0, le=100)
-    activity_netflow_threshold: Decimal = Field(default=Decimal("1000"), ge=0)
+    price_change_threshold: float = Field(default=5.0, ge=0, le=100)
+    activity_netflow_threshold: float = Field(default=1000.0, ge=0)
     min_trigger_interval: int = Field(default=5, ge=1, le=1440)
     scan_interval: int = Field(default=15, ge=1, le=1440)
 

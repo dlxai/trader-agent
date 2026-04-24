@@ -1,5 +1,6 @@
 """Provider routes for AI model providers."""
 
+import os
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
@@ -18,6 +19,8 @@ from src.schemas.provider import (
     ProviderTestResponse,
     AVAILABLE_PROVIDERS,
 )
+
+_PROXY_URL = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
 from src.schemas.base import ApiResponse
 from src.dependencies import get_current_active_user
 
@@ -74,7 +77,7 @@ async def fetch_models_direct(
         headers["Authorization"] = f"Bearer {api_key}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, proxy=_PROXY_URL) as client:
             response = await client.get(
                 f"{api_base.rstrip('/')}/models",
                 headers=headers,
@@ -410,7 +413,7 @@ async def get_provider_models(
         headers["Authorization"] = f"Bearer {provider.api_key}"
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, proxy=_PROXY_URL) as client:
             response = await client.get(
                 f"{provider.api_base.rstrip('/')}/models",
                 headers=headers,

@@ -58,6 +58,7 @@ class Portfolio(Base, TimestampMixin):
 
     # Settings
     is_active: Mapped[bool] = mapped_column(default=True)
+    is_paused: Mapped[bool] = mapped_column(default=False)
     is_default: Mapped[bool] = mapped_column(default=False)
     trading_mode: Mapped[str] = mapped_column(String(10), default="paper")
     risk_level: Mapped[str] = mapped_column(String(20), default="medium")

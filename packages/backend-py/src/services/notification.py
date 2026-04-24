@@ -1,9 +1,12 @@
 """Notification service for sending alerts to users."""
 
+import os
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from src.models.user import User
+
+_PROXY_URL = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
 
 
 async def send_telegram_notification(
@@ -30,7 +33,7 @@ async def send_telegram_notification(
 async def _send_telegram_message(bot_token: str, chat_id: str, message: str) -> bool:
     """Send message via Telegram Bot API."""
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(proxy=_PROXY_URL) as client:
         try:
             response = await client.post(url, json={
                 "chat_id": chat_id,

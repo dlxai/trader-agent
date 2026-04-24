@@ -1,8 +1,10 @@
 """Strategy runner service for scheduled execution."""
 
 import asyncio
+import logging
 import sys
 import os
+import traceback
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional, List, Dict, Any, Tuple
@@ -11,6 +13,8 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 # Ensure strategy-py is importable
 _backend_py_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,7 +41,9 @@ from strategy.buy_strategy import (
     MarketContext as BuyMarketContext,
     OddsBiasMetrics,
     TimeDecayMetrics,
+    OrderbookPressureMetrics,
     CapitalFlowMetrics,
+    SportsMomentumMetrics,
     BuyDecision,
     BuyDecisionOutput,
 )
@@ -99,6 +105,9 @@ class StrategyRunner:
         self._data_source_manager = get_data_source_manager()
         self.clob_client: Optional["ClobClient"] = None  # py-clob-client v2
 
+        # Global proxy for all HTTP requests
+        self._proxy_url = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
+
         # Factor strategy engine
         self._buy_strategy: Optional[BuyStrategy] = None
 
@@ -119,6 +128,9 @@ class StrategyRunner:
 
         # Token ID -> Condition ID mapping (for quick lookup)
         self._token_to_condition: Dict[str, str] = {}
+
+        # Trigger checkers per strategy (persist cooldown state across iterations)
+        self._trigger_checkers: Dict[UUID, TriggerChecker] = {}
 
     def _get_cached_markets(self) -> List[dict]:
         """Return cached markets if not expired."""
@@ -152,12 +164,43 @@ class StrategyRunner:
         self._market_cache_ttl = datetime.utcnow() + timedelta(
             seconds=self._market_cache_duration_seconds
         )
-        print(f"Markets cached: {len(self._market_cache)} markets, {len(self._token_to_condition)} token mappings")
+        logger.info("Markets cached: %d markets, %d token mappings", len(self._market_cache), len(self._token_to_condition))
+
+    def _get_market_yes_token_id(self, market: dict) -> Optional[str]:
+        """Extract YES token_id from Gamma market dict for CLOB price lookup.
+
+        Gamma API returns condition_id in 'id' field and CLOB token_ids in
+        'tokens' or 'clob_token_ids'. We need the actual CLOB token_id for
+        PriceMonitor subscription and lookup.
+        """
+        # Try clob_token_ids dict first
+        clob_ids = market.get("clob_token_ids", {})
+        if isinstance(clob_ids, dict):
+            for key, tid in clob_ids.items():
+                if key.lower() in ("yes", "y") and tid:
+                    return tid
+
+        # Fall back to tokens list
+        for token in market.get("tokens", []):
+            outcome = token.get("outcome", "")
+            if outcome and outcome.lower() in ("yes", "y"):
+                tid = token.get("token_id") or token.get("clobTokenId", "")
+                if tid:
+                    return tid
+
+        return None
 
     async def start_strategy(self, strategy_id: UUID) -> None:
         """Start running a strategy."""
+        logger.info("Strategy %s: start requested", strategy_id)
         if strategy_id in self._tasks:
-            return  # Already running
+            existing_task = self._tasks[strategy_id]
+            if not existing_task.done() and not existing_task.cancelled():
+                logger.info("Strategy %s: already running, skip", strategy_id)
+                return  # Already running
+            # Clean up finished/cancelled task so we can restart
+            del self._tasks[strategy_id]
+            logger.info("Strategy %s: cleaned up stale task reference", strategy_id)
 
         # Get strategy and portfolio info from database
         async with AsyncSessionLocal() as db:
@@ -165,11 +208,15 @@ class StrategyRunner:
                 select(Strategy).where(Strategy.id == strategy_id)
             )
             strategy = result.scalar_one_or_none()
-            if not strategy or not strategy.portfolio_id:
-                raise ValueError("Strategy not found or no portfolio")
+            if not strategy:
+                raise ValueError("Strategy not found")
+            if not strategy.portfolio_id:
+                raise ValueError("Strategy has no portfolio assigned")
+            logger.info("Strategy %s: loaded strategy '%s' for portfolio %s", strategy_id, strategy.name, strategy.portfolio_id)
 
             # Initialize ClobClient v2 if not already done
             if not self.clob_client:
+                logger.info("Strategy %s: initializing ClobClient...", strategy_id)
                 wallet_result = await db.execute(
                     select(Wallet)
                     .where(Wallet.user_id == strategy.user_id, Wallet.is_default == True)
@@ -182,6 +229,7 @@ class StrategyRunner:
                     else None
                 )
                 proxy = wallet.proxy_wallet_address if wallet else None
+                logger.info("Strategy %s: default wallet found=%s, has_private_key=%s, proxy=%s", strategy_id, wallet is not None, private_key is not None, proxy is not None)
 
                 if not private_key:
                     raise ValueError("No default wallet with private key found")
@@ -201,70 +249,92 @@ class StrategyRunner:
                     self.clob_client = ClobClient(**kwargs)
                     api_creds = self.clob_client.create_or_derive_api_creds()
                     self.clob_client.set_api_creds(api_creds)
+                    logger.info("Strategy %s: ClobClient initialized successfully", strategy_id)
                 except Exception as e:
-                    print(f"Failed to initialize ClobClient: {e}")
+                    logger.error("Strategy %s: Failed to initialize ClobClient: %s", strategy_id, e)
                     raise
 
         # Get or create shared data source (starts WebSocket connections)
-        data_source = await self._data_source_manager.get_or_create_source(
-            portfolio_id=strategy.portfolio_id,
-            source_type="polymarket"
-        )
+        logger.info("Strategy %s: creating data source for portfolio %s...", strategy_id, strategy.portfolio_id)
+        try:
+            data_source = await self._data_source_manager.get_or_create_source(
+                portfolio_id=strategy.portfolio_id,
+                source_type="polymarket"
+            )
+        except Exception as e:
+            logger.error("Strategy %s: DataSource creation failed: %s", strategy_id, e)
+            raise
 
-        print(f"Strategy {strategy_id}: data source started, WebSocket connections active")
+        logger.info("Strategy %s: data source ready, starting loop task...", strategy_id)
 
         task = asyncio.create_task(self._run_strategy_loop(strategy_id, data_source))
         self._tasks[strategy_id] = task
+        logger.info("Strategy %s: loop task created and registered", strategy_id)
 
     async def stop_strategy(self, strategy_id: UUID) -> None:
         """Stop a running strategy."""
         if strategy_id in self._tasks:
             self._tasks[strategy_id].cancel()
             del self._tasks[strategy_id]
+            self._trigger_checkers.pop(strategy_id, None)
+            logger.info("Strategy %s: stopped", strategy_id)
 
     async def _run_strategy_loop(self, strategy_id: UUID, data_source: DataSource) -> None:
         """Main strategy execution loop."""
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(Strategy).where(Strategy.id == strategy_id)
-            )
-            strategy = result.scalar_one_or_none()
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Strategy).where(Strategy.id == strategy_id)
+                )
+                strategy = result.scalar_one_or_none()
 
-            if not strategy:
-                return
+                if not strategy:
+                    logger.warning("Strategy %s: not found in DB, exiting loop", strategy_id)
+                    return
 
-            interval = strategy.run_interval_minutes * 60
+                interval = strategy.run_interval_minutes * 60
+                iteration = 0
+                logger.info("Strategy %s (%s): loop started, interval=%ds", strategy_id, strategy.name, interval)
 
-            while strategy.is_active:
-                try:
-                    # 1. Sync on-chain positions from proxy wallet
-                    onchain_positions = await self._sync_onchain_positions(db, strategy)
+                while strategy.is_active:
+                    iteration += 1
+                    logger.info("Strategy %s: iteration %d started", strategy_id, iteration)
+                    try:
+                        # 1. Sync on-chain positions from proxy wallet
+                        onchain_positions = await self._sync_onchain_positions(db, strategy)
+                        logger.info("Strategy %s: synced %d on-chain positions", strategy_id, len(onchain_positions))
 
-                    # 2. Subscribe WebSocket for on-chain positions only
-                    if onchain_positions:
-                        onchain_token_ids = [p["token_id"] for p in onchain_positions if p.get("token_id")]
-                        if onchain_token_ids and hasattr(data_source, "subscribe"):
-                            try:
-                                await data_source.subscribe(onchain_token_ids)
-                            except Exception as e:
-                                print(f"Failed to subscribe on-chain positions: {e}")
+                        # 2. Subscribe WebSocket for on-chain positions only
+                        if onchain_positions:
+                            onchain_token_ids = [p["token_id"] for p in onchain_positions if p.get("token_id")]
+                            if onchain_token_ids and hasattr(data_source, "subscribe"):
+                                try:
+                                    await data_source.subscribe(onchain_token_ids)
+                                except Exception as e:
+                                    logger.warning("Strategy %s: failed to subscribe on-chain positions: %s", strategy_id, e)
 
-                    # 3. Monitor existing positions (stop-loss / take-profit / flow-assisted exit)
-                    await self._monitor_positions(db, strategy, data_source, onchain_positions)
+                        # 3. Monitor existing positions (stop-loss / take-profit / flow-assisted exit)
+                        await self._monitor_positions(db, strategy, data_source, onchain_positions)
 
-                    # 4. Execute strategy to find new opportunities
-                    await self._execute_strategy(db, strategy, data_source)
+                        # 4. Execute strategy to find new opportunities
+                        signal_log = await self._execute_strategy(db, strategy, data_source)
+                        if signal_log is None:
+                            logger.info("Strategy %s: iteration %d ended, no signal generated", strategy_id, iteration)
+                        else:
+                            logger.info("Strategy %s: iteration %d ended, signal=%s status=%s", strategy_id, iteration, signal_log.signal_type, signal_log.status)
 
-                    strategy.last_run_at = datetime.utcnow()
-                    strategy.total_runs += 1
-                    await db.commit()
-                except Exception as e:
-                    print(f"Strategy execution error: {e}")
-                    import traceback
-                    traceback.print_exc()
+                        strategy.last_run_at = datetime.utcnow()
+                        strategy.total_runs += 1
+                        await db.commit()
+                    except Exception as e:
+                        logger.exception("Strategy %s: execution error in iteration %d: %s", strategy_id, iteration, e)
 
-                await asyncio.sleep(interval)
-                await db.refresh(strategy)
+                    await asyncio.sleep(interval)
+                    await db.refresh(strategy)
+        finally:
+            # Clean up task reference so the strategy can be restarted
+            self._tasks.pop(strategy_id, None)
+            logger.info("Strategy %s: loop exited, task reference cleaned up", strategy_id)
 
     async def _execute_strategy(
         self, db: AsyncSession, strategy: Strategy, data_source: DataSource
@@ -278,9 +348,9 @@ class StrategyRunner:
 
         # 2. Initialize filter and trigger
         filter_config = {}
-        if strategy.filters:
-            filter_config = strategy.filters if isinstance(strategy.filters, dict) else {}
-        elif strategy.position_monitor:
+        if strategy.filters and isinstance(strategy.filters, dict):
+            filter_config = strategy.filters
+        else:
             filter_config = {
                 'min_confidence': 40,
                 'min_price': 0.5,
@@ -291,10 +361,13 @@ class StrategyRunner:
         signal_filter = SignalFilter(filter_config)
 
         trigger_config = {}
-        if strategy.trigger:
-            trigger_config = strategy.trigger if isinstance(strategy.trigger, dict) else {}
+        if strategy.trigger and isinstance(strategy.trigger, dict):
+            trigger_config = strategy.trigger
 
-        trigger_checker = TriggerChecker(trigger_config)
+        # Use persistent trigger checker per strategy (cooldown survives across iterations)
+        if strategy.id not in self._trigger_checkers:
+            self._trigger_checkers[strategy.id] = TriggerChecker(trigger_config)
+        trigger_checker = self._trigger_checkers[strategy.id]
 
         # 3. Cooldown check
         if not trigger_checker.check_cooldown():
@@ -308,49 +381,83 @@ class StrategyRunner:
             config=buy_config,
         )
 
-        # 5. Subscribe token_ids to data source for real-time updates
-        token_ids = [m.get("id") or m.get("token_id") for m in markets if m.get("id") or m.get("token_id")]
+        # Build condition_id -> CLOB token_id mapping for correct lookups
+        market_token_map: Dict[str, str] = {}
+        for m in markets:
+            condition_id = m.get("id") or m.get("conditionId") or m.get("condition_id", "")
+            token_id = self._get_market_yes_token_id(m)
+            if condition_id and token_id:
+                market_token_map[condition_id] = token_id
+                # Maintain reverse mapping for data_source internal lookups
+                self._token_to_condition[token_id] = condition_id
+
+        # 5. Subscribe CLOB token_ids to data source for real-time updates
+        token_ids = list(set(market_token_map.values()))
         if token_ids and hasattr(data_source, "subscribe"):
             try:
                 await data_source.subscribe(token_ids)
-                print(f"Subscribed {len(token_ids)} tokens to data source")
+                logger.info("Subscribed %d CLOB tokens to data source", len(token_ids))
             except Exception as e:
-                print(f"Failed to subscribe tokens: {e}")
+                logger.warning("Failed to subscribe tokens: %s", e)
+
+        # 5a. Push market metadata using CLOB token_id for expiry calc
+        if hasattr(data_source, "update_market_meta"):
+            for condition_id, token_id in market_token_map.items():
+                m = self._market_cache.get(condition_id)
+                if m and token_id:
+                    try:
+                        data_source.update_market_meta(token_id, m)
+                    except Exception:
+                        pass
 
         # 6. Filter markets + check triggers + factor evaluation
         triggered_markets: List[dict] = []
         factor_results: List[Tuple[str, BuyDecisionOutput]] = []
+        stats = {"prefilter": 0, "no_price": 0, "signal_filter": 0, "keyword": 0, "entry_cond": 0, "no_trigger": 0, "factor_reject": 0, "passed": 0}
 
         for market in markets:
-            token_id = market.get("id") or market.get("token_id")
+            condition_id = market.get("id") or market.get("conditionId") or market.get("condition_id", "")
+            token_id = market_token_map.get(condition_id)
             if not token_id:
                 continue
+
+            # === Tier 1: Activity flow pre-filter (PRIMARY GATE, 60s window) ===
+            activity_data = await data_source.get_activity(token_id)
+            if activity_data is not None:
+                # 60秒窗口：无活跃交易员且净流入不足时跳过
+                if activity_data.unique_traders < 2 and abs(activity_data.netflow) < 50:
+                    logger.debug(
+                        "Activity pre-filter rejected %s (60s): traders=%d netflow=%.2f",
+                        token_id, activity_data.unique_traders, activity_data.netflow,
+                    )
+                    stats["prefilter"] += 1
+                    continue
 
             # Get real-time price data
             market_data = await data_source.get_market_data(token_id)
             if not market_data:
+                stats["no_price"] += 1
                 continue
 
             # Apply SignalFilter (price range, dead zone, expiry)
             if not signal_filter.filter_market(market_data):
+                stats["signal_filter"] += 1
                 continue
 
             # Keyword filter
             market_name = market.get("question", market.get("symbol", ""))
             if not signal_filter.filter_by_keywords(market_name):
+                stats["keyword"] += 1
                 continue
 
-            # === Layer 3: Entry Condition Validation ===
+            # === Layer 2: Entry Condition Validation ===
             new_price = market_data.yes_price
 
-            # EntryConditionValidator (price range, liquidity, expiry, volatility)
             adapter = _EntryConditionAdapter(market_data)
             entry_cond_config = EntryConditionConfig(
                 price_min=0.05,
                 price_max=0.95,
-                death_zone_min=0.60,
-                death_zone_max=0.85,
-                allow_death_zone=False,
+                allow_death_zone=True,
                 min_liquidity=1000.0,
                 min_order_book_depth=500.0,
             )
@@ -367,29 +474,58 @@ class StrategyRunner:
             if not cond_result.can_enter:
                 failed = cond_result.failed_checks
                 reason = failed[0].message if failed else str(cond_result.overall_result)
-                print(f"EntryConditionValidator rejected {market_data.market_id}: {reason}")
+                logger.info("EntryConditionValidator rejected %s: %s", market_data.market_id, reason)
+                stats["entry_cond"] += 1
                 continue
 
             # Trigger check (price change + netflow)
-            old_price = market.get("price", 0.5)
+            # old_price from Gamma API market dict usually has no "price" field
+            raw_old_price = market.get("price")
             new_price = market_data.yes_price
 
-            price_triggered = trigger_checker.check_price_trigger(old_price, new_price)
+            if raw_old_price is not None:
+                price_triggered = trigger_checker.check_price_trigger(float(raw_old_price), new_price)
+            else:
+                # First-time scan: no historical price, skip price trigger requirement
+                price_triggered = True
+                logger.debug("Price trigger skipped for %s (first scan)", token_id)
 
-            activity_data = await data_source.get_activity(token_id)
             netflow = activity_data.netflow if activity_data else 0
             activity_triggered = trigger_checker.check_activity_trigger(netflow, new_price)
 
-            if not (price_triggered or activity_triggered):
+            # Default AND logic: both price and activity must confirm
+            # If no activity data available, skip activity trigger requirement
+            should_trigger = price_triggered and (activity_triggered if activity_data is not None else True)
+
+            # Sports event override: strong game events can bypass the AND gate
+            sports_triggered = False
+            if hasattr(data_source, "get_sports_signal"):
+                sports_signal = data_source.get_sports_signal(token_id)
+                if sports_signal and sports_signal.get("strength") == "strong":
+                    sports_triggered = True
+                    logger.info("Sports strong signal override for %s: %s", token_id, sports_signal.get("reason"))
+
+            if sports_triggered:
+                should_trigger = True
+
+            if not should_trigger:
+                stats["no_trigger"] += 1
+                logger.debug(
+                    "Trigger check failed %s: price_triggered=%s activity_triggered=%s has_activity=%s",
+                    token_id, price_triggered, activity_triggered, activity_data is not None,
+                )
                 continue
+
+            stats["passed"] += 1
 
             # === Factor Evaluation ===
             # Build MarketContext and run BuyStrategy.evaluate()
-            context = self._build_market_context(market, market_data, activity_data)
+            context = self._build_market_context(market, market_data, activity_data, data_source, token_id)
             factor_output = await self._buy_strategy.evaluate(context)
 
             # Filter by factor score: PASS or BLOCKED skip
             if factor_output.decision in (BuyDecision.PASS, BuyDecision.BLOCKED):
+                stats["factor_reject"] += 1
                 continue
 
             # Store factor result
@@ -397,6 +533,8 @@ class StrategyRunner:
 
             # Enrich market with trigger and factor info for AI
             market["_triggered"] = True
+            raw_old_price = market.get("price")
+            old_price = float(raw_old_price) if raw_old_price is not None else new_price
             market["_price_change"] = abs(new_price - old_price) / old_price * 100 if old_price > 0 else 0
             market["_netflow"] = netflow
             market["_factor_score"] = sum(factor_output.signal_scores.values()) / len(factor_output.signal_scores) if factor_output.signal_scores else 0
@@ -408,6 +546,11 @@ class StrategyRunner:
             market["_current_price"] = new_price
 
             triggered_markets.append(market)
+
+        logger.info(
+            "Strategy filter stats: total=%d prefilter=%d no_price=%d signal_filter=%d keyword=%d entry_cond=%d no_trigger=%d factor_reject=%d passed=%d",
+            len(markets), stats["prefilter"], stats["no_price"], stats["signal_filter"], stats["keyword"], stats["entry_cond"], stats["no_trigger"], stats["factor_reject"], stats["passed"],
+        )
 
         if not triggered_markets:
             return None
@@ -504,7 +647,7 @@ class StrategyRunner:
                 signal_log.status = "rejected"
                 signal_log.signal_reason += " | Rejected: max positions reached"
                 await db.commit()
-                print(f"Signal rejected: max positions {current_positions}/{strategy.max_positions}")
+                logger.info("Signal rejected: max positions %d/%d", current_positions, strategy.max_positions)
                 return signal_log
 
             # Check duplicate position (same market + side)
@@ -520,7 +663,7 @@ class StrategyRunner:
                 signal_log.status = "rejected"
                 signal_log.signal_reason += " | Rejected: duplicate open position"
                 await db.commit()
-                print(f"Signal rejected: duplicate position {market_id} {side}")
+                logger.info("Signal rejected: duplicate position %s %s", market_id, side)
                 return signal_log
 
             # Execute order
@@ -617,7 +760,7 @@ class StrategyRunner:
                     )
                     db.add(new_pos)
                     await db.flush()  # Flush to get new_pos.id assigned
-                    print(f"On-chain position synced: {ocp['market_id']} {ocp['side']} size={ocp['size']}")
+                    logger.info("On-chain position synced: %s %s size=%s", ocp['market_id'], ocp['side'], ocp['size'])
 
                     # Register with flow exit and sports monitor
                     self._flow_exit.register_position(
@@ -640,7 +783,7 @@ class StrategyRunner:
                 if key not in onchain_keys:
                     dbp.close_position(dbp.current_price or dbp.entry_price, datetime.utcnow())
                     dbp.notes = (dbp.notes or "") + " | Closed: no longer on-chain"
-                    print(f"Position closed (not on-chain): {dbp.id} {dbp.market_id} {dbp.side}")
+                    logger.info("Position closed (not on-chain): %s %s %s", dbp.id, dbp.market_id, dbp.side)
                     # Unregister from sports monitor
                     if data_source and hasattr(data_source, "unregister_sports_position"):
                         data_source.unregister_sports_position(str(dbp.id))
@@ -649,9 +792,7 @@ class StrategyRunner:
             return onchain_list
 
         except Exception as e:
-            print(f"On-chain position sync failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("On-chain position sync failed: %s", e)
             return []
 
     async def _monitor_positions(
@@ -680,9 +821,9 @@ class StrategyRunner:
         if onchain_token_ids and hasattr(data_source, "subscribe"):
             try:
                 await data_source.subscribe(onchain_token_ids)
-                print(f"Subscribed {len(onchain_token_ids)} on-chain position tokens to WebSocket")
+                logger.info("Subscribed %d on-chain position tokens to WebSocket", len(onchain_token_ids))
             except Exception as e:
-                print(f"Failed to subscribe on-chain position tokens: {e}")
+                logger.warning("Failed to subscribe on-chain position tokens: %s", e)
 
         for pos in positions:
             try:
@@ -778,7 +919,7 @@ class StrategyRunner:
                     )
 
             except Exception as e:
-                print(f"Position monitoring error for {pos.id}: {e}")
+                logger.error("Position monitoring error for %s: %s", pos.id, e)
                 continue
 
         await db.commit()
@@ -794,14 +935,14 @@ class StrategyRunner:
     ) -> None:
         """Close an open position by placing a reverse market order and log sell signal."""
         if not self.clob_client:
-            print("ClobClient not initialized, cannot close position")
+            logger.error("ClobClient not initialized, cannot close position")
             return
 
         try:
             # Get token_id for the position's side
             token_id = await self._get_token_id(position.market_id, position.side)
             if not token_id:
-                print(f"Token not found for position {position.id}")
+                logger.warning("Token not found for position %s", position.id)
                 return
 
             from py_clob_client.clob_types import MarketOrderArgs
@@ -876,24 +1017,22 @@ class StrategyRunner:
             if data_source and hasattr(data_source, "unregister_sports_position"):
                 data_source.unregister_sports_position(str(position.id))
 
-            print(f"Position closed: {position.id}, reason={reason}, pnl={position.realized_pnl}")
+            logger.info("Position closed: %s, reason=%s, pnl=%s", position.id, reason, position.realized_pnl)
 
         except Exception as e:
-            print(f"Close position failed for {position.id}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Close position failed for %s: %s", position.id, e)
 
     async def _get_available_markets(self, strategy: Strategy) -> list[dict]:
         """Fetch available markets from Gamma API with caching."""
         # 1. Try cache first
         cached = self._get_cached_markets()
         if cached:
-            print(f"Using cached markets: {len(cached)} markets")
+            logger.info("Using cached markets: %d markets", len(cached))
             return cached
 
         # 2. Fetch from Gamma API
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(proxy=self._proxy_url) as client:
                 resp = await client.get(
                     "https://gamma-api.polymarket.com/markets",
                     params={
@@ -914,10 +1053,11 @@ class StrategyRunner:
 
             # 3. Cache and build mappings
             self._cache_markets(filtered)
+            logger.info("Fetched %d markets from Gamma API", len(filtered))
             return filtered
 
         except Exception as e:
-            print(f"Failed to fetch markets from Gamma API: {e}")
+            logger.error("Failed to fetch markets from Gamma API: %s", e)
             return []
 
     def _get_buy_strategy_config(self, strategy: Strategy) -> BuyStrategyConfig:
@@ -943,7 +1083,9 @@ class StrategyRunner:
         self,
         market: dict,
         market_data: MarketData,
-        activity_data: Optional[ActivityData]
+        activity_data: Optional[ActivityData],
+        data_source: DataSource,
+        token_id: str,
     ) -> BuyMarketContext:
         """Build BuyStrategy MarketContext from available data."""
         current_price = market_data.yes_price
@@ -978,7 +1120,26 @@ class StrategyRunner:
             urgency_score=urgency,
         )
 
-        # 3. Capital Flow from activity data
+        # 3. Orderbook Pressure (from WebSocket price data)
+        orderbook_pressure = None
+        if market_data.best_bid is not None and market_data.best_ask is not None:
+            spread = market_data.spread or (market_data.best_ask - market_data.best_bid)
+            mid_price = (market_data.best_bid + market_data.best_ask) / 2
+            # Imbalance: simple proxy based on price position within bid-ask spread
+            if mid_price > 0:
+                position_in_spread = (current_price - market_data.best_bid) / spread if spread > 0 else 0.5
+                imbalance = (position_in_spread - 0.5) * 2  # -1 to 1
+            else:
+                imbalance = 0.0
+            orderbook_pressure = OrderbookPressureMetrics(
+                bid_ask_spread=spread,
+                bid_depth=market_data.bid_depth or 0,
+                ask_depth=market_data.ask_depth or 0,
+                imbalance_ratio=imbalance,
+                price_impact=spread * 0.5,
+            )
+
+        # 4. Capital Flow from activity data
         capital_flow = None
         if activity_data:
             total_volume = activity_data.buy_volume + activity_data.sell_volume
@@ -992,6 +1153,24 @@ class StrategyRunner:
                     trend_alignment=min(1.0, max(-1.0, net_ratio)),
                 )
 
+        # 5. Sports Momentum (from live score cache)
+        sports_momentum = None
+        if hasattr(data_source, "get_sports_signal"):
+            sports_signal = data_source.get_sports_signal(token_id)
+            if sports_signal:
+                score_state = sports_signal.get("score_state", {})
+                sports_momentum = SportsMomentumMetrics(
+                    score_diff=abs(
+                        score_state.get("home_score", 0) - score_state.get("away_score", 0)
+                    ),
+                    time_remaining=score_state.get("time_remaining", 90),
+                    game_status=score_state.get("game_status", "unknown"),
+                    momentum_score=0.8 if sports_signal.get("strength") == "strong" else (
+                        0.5 if sports_signal.get("strength") == "moderate" else 0.2
+                    ),
+                    event_strength=sports_signal.get("strength", "weak"),
+                )
+
         return BuyMarketContext(
             market_id=market.get("id", ""),
             outcome_id=market.get("token_id", ""),
@@ -1002,9 +1181,10 @@ class StrategyRunner:
             liquidity=market.get("liquidity", 0),
             odds_bias=odds_bias,
             time_decay=time_decay,
-            orderbook_pressure=None,  # No orderbook data yet
+            orderbook_pressure=orderbook_pressure,
             capital_flow=capital_flow,
-            information_edge=None,     # No news/social data yet
+            information_edge=None,
+            sports_momentum=sports_momentum,
         )
 
     async def _call_ai_analysis(
@@ -1023,7 +1203,7 @@ class StrategyRunner:
                 provider = result.scalar_one_or_none()
 
         if not provider or not provider.api_key:
-            print(f"No provider or API key found for strategy {strategy.id}")
+            logger.warning("No provider or API key found for strategy %s", strategy.id)
             return self._generate_mock_ai_result(markets)
 
         # Build prompts
@@ -1078,7 +1258,7 @@ class StrategyRunner:
         start_time = datetime.utcnow()
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=60.0, proxy=self._proxy_url) as client:
                 response = await client.post(
                     f"{api_base}/chat/completions",
                     headers=headers,
@@ -1106,11 +1286,11 @@ class StrategyRunner:
                 ai_result["market_id"] = markets[0].get("id", "")
                 ai_result["symbol"] = markets[0].get("symbol", "")
 
-            print(f"AI analysis completed: {ai_result.get('action')} {ai_result.get('side')} @ {ai_result.get('confidence')}")
+            logger.info("AI analysis completed: %s %s @ %.2f", ai_result.get('action'), ai_result.get('side'), ai_result.get('confidence'))
             return ai_result
 
         except Exception as e:
-            print(f"AI API call failed: {e}")
+            logger.error("AI API call failed: %s", e)
             return self._generate_mock_ai_result(markets)
 
     def _get_default_system_prompt(self) -> str:
@@ -1266,19 +1446,19 @@ Explain how the factor scores influenced (or contradicted) your final decision."
     ) -> None:
         """Execute order using py-clob-client v2 and create Position record."""
         if not self.clob_client:
-            print("ClobClient not initialized")
+            logger.error("ClobClient not initialized")
             return
 
         market_id = signal_log.market_id
         if not market_id:
-            print("No market_id in signal")
+            logger.error("No market_id in signal")
             return
 
         try:
             # Get token_id
             token_id = await self._get_token_id(market_id, signal_log.side)
             if not token_id:
-                print(f"Token not found for side: {signal_log.side}")
+                logger.warning("Token not found for side: %s", signal_log.side)
                 return
 
             # Execute market order
@@ -1373,12 +1553,10 @@ Explain how the factor scores influenced (or contradicted) your final decision."
                     side=signal_log.side,
                 )
 
-            print(f"Order placed and position created: {position.id}, market={market_id}, side={signal_log.side}")
+            logger.info("Order placed and position created: %s, market=%s, side=%s", position.id, market_id, signal_log.side)
 
         except Exception as e:
-            print(f"Order execution failed: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Order execution failed: %s", e)
             signal_log.status = "failed"
             await db.commit()
 
@@ -1396,7 +1574,7 @@ Explain how the factor scores influenced (or contradicted) your final decision."
 
         # 2. HTTP fallback
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(proxy=self._proxy_url) as client:
                 resp = await client.get(
                     f"https://gamma-api.polymarket.com/markets/{condition_id}",
                     timeout=10,
@@ -1422,7 +1600,7 @@ Explain how the factor scores influenced (or contradicted) your final decision."
                 return tid
 
         except Exception as e:
-            print(f"Failed to get token_id from Gamma API: {e}")
+            logger.warning("Failed to get token_id from Gamma API: %s", e)
 
         return None
 

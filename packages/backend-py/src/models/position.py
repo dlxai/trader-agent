@@ -33,6 +33,7 @@ class Position(Base, TimestampMixin):
     symbol: Mapped[str] = mapped_column(String(50), index=True)
     market_slug: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     condition_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    token_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
 
     # Position details
     side: Mapped[str] = mapped_column(String(10))  # "yes" or "no"

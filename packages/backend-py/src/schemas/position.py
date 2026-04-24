@@ -104,6 +104,14 @@ class PositionResponse(PositionBase):
     source: str
     signal_id: Optional[str]
     metadata: Optional[dict]
+    market_name: Optional[str] = None
+
+
+class PortfolioMini(BaseSchema):
+    """Minimal portfolio info for embedding in other responses."""
+
+    id: UUID
+    name: str
 
 
 class PositionSummaryResponse(BaseSchema):
@@ -124,6 +132,8 @@ class PositionSummaryResponse(BaseSchema):
 
     opened_at: datetime
     leverage: Decimal
+    market_name: Optional[str] = None
+    portfolio: Optional[PortfolioMini] = None
 
 
 class PositionListResponse(BaseSchema):

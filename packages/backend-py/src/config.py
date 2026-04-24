@@ -4,8 +4,12 @@ from pathlib import Path
 from typing import List, Literal, Optional
 from functools import lru_cache
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
+
+# Load .env into os.environ so that os.environ.get() works everywhere
+load_dotenv()
 
 
 class Settings(BaseSettings):

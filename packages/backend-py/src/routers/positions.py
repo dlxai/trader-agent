@@ -8,6 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+import httpx
 
 from src.database import get_async_session
 from src.models.position import Position
@@ -131,8 +133,11 @@ async def list_positions(
 ):
     """List positions with filtering."""
     # Build query
-    query = select(Position).join(Portfolio).where(
-        Portfolio.user_id == current_user.id
+    query = (
+        select(Position)
+        .join(Portfolio)
+        .options(selectinload(Position.portfolio))
+        .where(Portfolio.user_id == current_user.id)
     )
 
     # Apply filters
@@ -162,23 +167,29 @@ async def list_positions(
     positions = result.scalars().all()
 
     # Convert to summary responses
-    items = [
-        PositionSummaryResponse(
-            id=p.id,
-            market_id=p.market_id,
-            symbol=p.symbol,
-            side=p.side,
-            status=p.status,
-            size=p.size,
-            entry_price=p.entry_price,
-            current_price=p.current_price,
-            unrealized_pnl=p.unrealized_pnl,
-            pnl_percent=p.pnl_percent,
-            opened_at=p.opened_at,
-            leverage=p.leverage,
+    items = []
+    for p in positions:
+        portfolio_mini = None
+        if p.portfolio:
+            portfolio_mini = {"id": p.portfolio.id, "name": p.portfolio.name}
+        items.append(
+            PositionSummaryResponse(
+                id=p.id,
+                market_id=p.market_id,
+                symbol=p.symbol,
+                side=p.side,
+                status=p.status,
+                size=p.size,
+                entry_price=p.entry_price,
+                current_price=p.current_price,
+                unrealized_pnl=p.unrealized_pnl,
+                pnl_percent=p.pnl_percent,
+                opened_at=p.opened_at,
+                leverage=p.leverage,
+                market_name=(p.position_metadata or {}).get("market_name") or p.symbol,
+                portfolio=portfolio_mini,
+            )
         )
-        for p in positions
-    ]
 
     total_pages = (total + page_size - 1) // page_size if total > 0 else 0
 
@@ -351,3 +362,218 @@ async def close_position(
         ),
         message="Position closed successfully",
     )
+
+
+@router.post(
+    "/sync",
+    response_model=ApiResponse[dict],
+    status_code=status.HTTP_200_OK,
+)
+async def sync_positions_from_chain(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """从 Polymarket 链上同步持仓到本地数据库.
+
+    使用 data-api.polymarket.com/positions 直接拉取持仓数据，
+    然后写入/更新本地 positions 表。
+    """
+    from uuid import uuid4
+    import os
+    from src.models.wallet import Wallet
+
+    proxy_url = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
+
+    # 1. 获取用户的默认钱包
+    result = await db.execute(
+        select(Wallet).where(
+            Wallet.user_id == current_user.id,
+            Wallet.is_default == True,
+        )
+    )
+    wallet = result.scalar_one_or_none()
+
+    if not wallet:
+        result = await db.execute(
+            select(Wallet).where(
+                Wallet.user_id == current_user.id,
+                Wallet.status == "active",
+            ).limit(1)
+        )
+        wallet = result.scalar_one_or_none()
+
+    if not wallet:
+        raise NotFoundError("Wallet", "No active wallet found for user")
+
+    # 2. 获取或创建默认 portfolio
+    result = await db.execute(
+        select(Portfolio).where(
+            Portfolio.user_id == current_user.id,
+        ).limit(1)
+    )
+    portfolio = result.scalar_one_or_none()
+
+    if not portfolio:
+        portfolio = Portfolio(
+            id=uuid4(),
+            user_id=current_user.id,
+            name="Default Portfolio",
+            initial_balance=Decimal("0"),
+            current_balance=Decimal("0"),
+            total_pnl=Decimal("0"),
+            status="active",
+        )
+        db.add(portfolio)
+        await db.flush()
+
+    # 3. 从 data-api 拉取链上持仓
+    try:
+        address = wallet.proxy_wallet_address or wallet.address
+        if not address:
+            raise ValidationError("Wallet has no address")
+
+        async with httpx.AsyncClient(proxy=proxy_url, timeout=15) as client:
+            resp = await client.get(
+                "https://data-api.polymarket.com/positions",
+                params={
+                    "sizeThreshold": "1",
+                    "limit": "100",
+                    "sortBy": "TOKENS",
+                    "sortDirection": "DESC",
+                    "user": address,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        positions_list = data if isinstance(data, list) else data.get("positions", [])
+        if not isinstance(positions_list, list):
+            raise ValidationError("Invalid response from data-api")
+
+        # 规范化持仓数据
+        onchain_list = []
+        for p in positions_list:
+            if not isinstance(p, dict):
+                continue
+            size = float(p.get("size") or p.get("quantity") or 0)
+            if size <= 0:
+                continue
+
+            token_id = p.get("tokenId") or p.get("token_id") or ""
+            market_id = p.get("conditionId") or p.get("marketId") or ""
+            title = p.get("title") or p.get("question") or p.get("marketName") or p.get("market") or ""
+            outcome = p.get("outcome") or p.get("position") or ""
+            side_raw = (p.get("side") or "BUY").lower()
+            side = "yes" if side_raw in ("buy", "BUY") else "no"
+            avg_price = float(p.get("avgCost") or p.get("avgPrice") or p.get("avg_cost") or 0.5)
+            unrealized_pnl = float(p.get("unrealizedPnl") or p.get("unrealized_pnl") or 0)
+
+            onchain_list.append({
+                "token_id": token_id,
+                "market_id": market_id,
+                "title": title,
+                "outcome": outcome,
+                "side": side,
+                "size": Decimal(str(size)),
+                "avg_price": avg_price,
+                "unrealized_pnl": unrealized_pnl,
+            })
+
+        synced_count = 0
+        closed_count = 0
+
+        # 获取本地已有的持仓
+        result = await db.execute(
+            select(Position).where(Position.portfolio_id == portfolio.id)
+        )
+        local_positions = {str(p.market_id): p for p in result.scalars().all()}
+        onchain_keys = set()
+
+        # 更新或创建持仓
+        for ocp in onchain_list:
+            market_id = ocp["market_id"] or ocp["token_id"]
+            onchain_keys.add(market_id)
+
+            display_name = ocp["title"] or ocp["outcome"] or market_id[:50]
+            avg_price = Decimal(str(ocp["avg_price"]))
+            size = ocp["size"]
+            unrealized = Decimal(str(ocp["unrealized_pnl"]))
+            if size > 0:
+                current_price = avg_price + (unrealized / size)
+            else:
+                current_price = avg_price
+            cost_basis = avg_price * size
+            if cost_basis > 0:
+                pnl_percent = (unrealized / cost_basis) * Decimal("100")
+            else:
+                pnl_percent = Decimal("0")
+
+            if market_id in local_positions:
+                local_pos = local_positions[market_id]
+                local_pos.size = size
+                local_pos.entry_price = avg_price
+                local_pos.current_price = current_price
+                local_pos.average_entry_price = avg_price
+                local_pos.unrealized_pnl = unrealized
+                local_pos.total_pnl = unrealized
+                local_pos.pnl_percent = pnl_percent
+                local_pos.status = "open"
+                local_pos.last_updated_at = datetime.utcnow()
+                if display_name:
+                    local_pos.symbol = display_name
+                    meta = local_pos.position_metadata or {}
+                    meta["market_name"] = display_name
+                    local_pos.position_metadata = meta
+                synced_count += 1
+            else:
+                new_position = Position(
+                    id=uuid4(),
+                    portfolio_id=portfolio.id,
+                    market_id=market_id,
+                    token_id=ocp["token_id"],
+                    symbol=display_name,
+                    side=ocp["side"],
+                    status="open",
+                    size=size,
+                    entry_price=avg_price,
+                    current_price=current_price,
+                    average_entry_price=avg_price,
+                    realized_pnl=Decimal("0"),
+                    unrealized_pnl=unrealized,
+                    total_pnl=unrealized,
+                    pnl_percent=pnl_percent,
+                    opened_at=datetime.utcnow(),
+                    last_updated_at=datetime.utcnow(),
+                    source="chain_sync",
+                    position_metadata={
+                        "token_id": ocp["token_id"],
+                        "chain_updated_at": str(datetime.utcnow()),
+                        "market_name": display_name,
+                    },
+                )
+                db.add(new_position)
+                synced_count += 1
+
+        # 关闭链上已平仓但本地还显示开的持仓
+        for market_id, local_pos in local_positions.items():
+            if market_id not in onchain_keys and local_pos.status == "open":
+                local_pos.status = "closed"
+                local_pos.closed_at = datetime.utcnow()
+                closed_count += 1
+
+        await db.commit()
+
+        return ApiResponse(
+            success=True,
+            data={
+                "synced": synced_count,
+                "closed": closed_count,
+                "total_chain_positions": len(onchain_list),
+                "wallet_address": wallet.address[:10] + "...",
+            },
+            message=f"Synced {synced_count} positions from chain",
+        )
+
+    except Exception as e:
+        await db.rollback()
+        raise ValidationError(f"Failed to sync positions: {str(e)}")

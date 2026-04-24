@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,10 +61,10 @@ async def create_strategy(
         provider_id=request.provider_id,
         system_prompt=request.system_prompt,
         custom_prompt=request.custom_prompt,
-        data_sources=request.data_sources or {},
-        trigger=request.trigger,
-        filters=request.filters,
-        position_monitor=request.position_monitor,
+        data_sources=request.data_sources.model_dump() if hasattr(request.data_sources, 'model_dump') else (request.data_sources or {}),
+        trigger=request.trigger.model_dump() if hasattr(request.trigger, 'model_dump') else request.trigger,
+        filters=request.filters.model_dump() if hasattr(request.filters, 'model_dump') else request.filters,
+        position_monitor=request.position_monitor.model_dump() if hasattr(request.position_monitor, 'model_dump') else request.position_monitor,
         min_order_size=request.min_order_size,
         max_order_size=request.max_order_size,
         default_amount=request.default_amount,
@@ -139,6 +139,7 @@ async def list_strategies(
             type=s.type,
             is_active=s.is_active,
             status=s.status,
+            portfolio_id=s.portfolio_id,
             provider_id=s.provider_id,
             min_order_size=s.min_order_size,
             max_order_size=s.max_order_size,
@@ -288,6 +289,12 @@ async def start_strategy(
     if strategy is None:
         raise NotFoundError("Strategy", f"Strategy {strategy_id} not found")
 
+    if not strategy.portfolio_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Strategy has no portfolio assigned",
+        )
+
     strategy.is_active = True
     strategy.status = "active"
 
@@ -298,8 +305,15 @@ async def start_strategy(
     try:
         await strategy_runner.start_strategy(strategy_id)
     except Exception as e:
-        # 即使 runner 启动失败，策略状态也已更新
-        print(f"Strategy runner error: {e}")
+        import logging
+        logging.getLogger(__name__).error("Strategy runner start failed: %s", e)
+        strategy.is_active = False
+        strategy.status = "error"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Strategy runner failed: {e}",
+        )
 
     return ApiResponse(
         success=True,

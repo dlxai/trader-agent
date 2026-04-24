@@ -1,6 +1,7 @@
 """Data source manager for shared WebSocket connections."""
 
 import asyncio
+import logging
 import sys
 import os
 from abc import ABC, abstractmethod
@@ -9,6 +10,8 @@ from uuid import UUID
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 # 添加 strategy-py 到路径
 _backend_py_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,6 +37,11 @@ class MarketData:
     volume: float
     hours_to_expiry: float
     timestamp: datetime = field(default_factory=datetime.utcnow)
+    best_bid: Optional[float] = None
+    best_ask: Optional[float] = None
+    spread: Optional[float] = None
+    bid_depth: Optional[float] = None
+    ask_depth: Optional[float] = None
 
 
 @dataclass
@@ -102,8 +110,11 @@ class DataSource(ABC):
 class PolymarketDataSource(DataSource):
     """Polymarket data source implementation using WebSocket"""
 
-    def __init__(self, proxy_url: str = "http://127.0.0.1:7890"):
-        self._proxy_url = proxy_url
+    def __init__(self, proxy_url: Optional[str] = None):
+        if proxy_url is not None:
+            self._proxy_url = proxy_url if proxy_url.strip() else None
+        else:
+            self._proxy_url = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
         self._running = False
 
         # WebSocket 组件
@@ -115,33 +126,59 @@ class PolymarketDataSource(DataSource):
         # 订阅的 token 列表
         self._subscribed_tokens: set = set()
 
+        # token_id -> condition_id 映射（用于 ActivityAnalyzer 查询）
+        self._token_to_condition: Dict[str, str] = {}
+
+        # 市场元数据缓存（token_id -> market dict，用于计算 hours_to_expiry 等）
+        self._market_meta_cache: Dict[str, Dict[str, Any]] = {}
+
     @property
     def source_type(self) -> str:
         return "polymarket"
 
     async def start(self) -> None:
-        """Start all WebSocket connections"""
+        """Start all WebSocket connections (with timeout protection)"""
+        import asyncio
+
         self._running = True
+        logger.info("PolymarketDataSource: starting WebSocket connections...")
 
-        # 启动价格监控 (持仓 token 价格)
-        self._price_monitor = PriceMonitor(proxy_url=self._proxy_url)
-        await self._price_monitor.start()
+        # 1. 启动价格监控 (持仓 token 价格)
+        try:
+            self._price_monitor = PriceMonitor(proxy_url=self._proxy_url)
+            await asyncio.wait_for(self._price_monitor.start(), timeout=5.0)
+            logger.info("PolymarketDataSource: PriceMonitor started")
+        except Exception as e:
+            logger.warning("PolymarketDataSource: PriceMonitor start failed (continuing without): %s", e)
+            self._price_monitor = None
 
-        # 启动 Activity 分析器 (纯数据分析器，无需 start)
+        # 2. 启动 Activity 分析器 (纯数据分析器，无需 start)
         self._activity_analyzer = ActivityAnalyzer()
+        logger.info("PolymarketDataSource: ActivityAnalyzer initialized")
 
-        # 启动 RealtimeService 订阅全市场交易活动，喂给 ActivityAnalyzer
-        self._realtime_service = RealtimeService(proxy=self._proxy_url)
-        await self._realtime_service.connect()
-        # 注册 trade 事件处理器，转发给 ActivityAnalyzer
-        self._realtime_service.on("trade", self._on_realtime_trade)
-        self._realtime_service.on("activity_trade", self._on_activity_trade)
-        # 订阅全市场交易活动
-        await self._realtime_service.subscribe_all_activity()
+        # 3. 启动 RealtimeService 订阅全市场交易活动
+        try:
+            self._realtime_service = RealtimeService(proxy=self._proxy_url)
+            await asyncio.wait_for(self._realtime_service.connect(), timeout=5.0)
+            # 注册 trade 事件处理器
+            self._realtime_service.on("trade", self._on_realtime_trade)
+            self._realtime_service.on("activity_trade", self._on_activity_trade)
+            await asyncio.wait_for(self._realtime_service.subscribe_all_activity(), timeout=5.0)
+            logger.info("PolymarketDataSource: RealtimeService connected")
+        except Exception as e:
+            logger.warning("PolymarketDataSource: RealtimeService start failed (continuing without): %s", e)
+            self._realtime_service = None
 
-        # 启动 Sports 比分监控
-        self._sports_monitor = SportsMarketMonitor(proxy_url=self._proxy_url)
-        await self._sports_monitor.start()
+        # 4. 启动 Sports 比分监控
+        try:
+            self._sports_monitor = SportsMarketMonitor(proxy_url=self._proxy_url)
+            await asyncio.wait_for(self._sports_monitor.start(), timeout=5.0)
+            logger.info("PolymarketDataSource: SportsMonitor started")
+        except Exception as e:
+            logger.warning("PolymarketDataSource: SportsMonitor start failed (continuing without): %s", e)
+            self._sports_monitor = None
+
+        logger.info("PolymarketDataSource: startup completed")
 
     def _on_realtime_trade(self, trade: Dict[str, Any]) -> None:
         """Handle trade from RealtimeService, forward to ActivityAnalyzer."""
@@ -175,25 +212,35 @@ class PolymarketDataSource(DataSource):
             "outcome": payload.get("outcome", "YES"),
             "price": payload.get("price", 0.5),
         }
+        if adapted["condition_id"]:
+            logger.info("[Activity] processing trade for %s, side=%s, amount=%s", adapted["condition_id"], adapted["side"], adapted["amount"])
         self._activity_analyzer.process_trade(adapted)
 
     async def stop(self) -> None:
         """Stop all WebSocket connections"""
         self._running = False
+        logger.info("PolymarketDataSource: stopping WebSocket connections...")
 
         if self._price_monitor:
             await self._price_monitor.stop()
+            logger.info("PolymarketDataSource: PriceMonitor stopped")
 
         if self._realtime_service:
             await self._realtime_service.close()
+            logger.info("PolymarketDataSource: RealtimeService closed")
 
         if self._sports_monitor:
             await self._sports_monitor.stop()
+            logger.info("PolymarketDataSource: SportsMonitor stopped")
+
+        logger.info("PolymarketDataSource: all components stopped")
 
     async def subscribe(self, token_ids: List[str]) -> None:
         """Subscribe to market updates"""
         # 订阅新的 tokens
         new_tokens = set(token_ids) - self._subscribed_tokens
+        if new_tokens:
+            logger.info("PolymarketDataSource: subscribing %d new tokens", len(new_tokens))
         for token_id in new_tokens:
             if self._price_monitor:
                 await self._price_monitor.subscribe_token(token_id)
@@ -201,10 +248,43 @@ class PolymarketDataSource(DataSource):
 
         # 取消订阅不再需要的 tokens
         old_tokens = self._subscribed_tokens - set(token_ids)
+        if old_tokens:
+            logger.info("PolymarketDataSource: unsubscribing %d old tokens", len(old_tokens))
         for token_id in old_tokens:
             if self._price_monitor:
                 await self._price_monitor.unsubscribe_token(token_id)
             self._subscribed_tokens.discard(token_id)
+
+        logger.debug("PolymarketDataSource: total subscribed tokens = %d", len(self._subscribed_tokens))
+
+    def update_market_meta(self, token_id: str, market_meta: Dict[str, Any]) -> None:
+        """Cache market metadata (endDate, condition_id, etc.) for expiry calculation.
+
+        Called by strategy_runner when Gamma market list is fetched.
+        """
+        if not token_id or not market_meta:
+            return
+        self._market_meta_cache[token_id] = market_meta
+
+        # Also maintain token -> condition mapping for ActivityAnalyzer
+        condition_id = market_meta.get("conditionId") or market_meta.get("condition_id")
+        if condition_id:
+            self._token_to_condition[token_id] = condition_id
+
+    def _get_hours_to_expiry(self, token_id: str) -> float:
+        """Calculate hours to expiry from cached market metadata."""
+        meta = self._market_meta_cache.get(token_id)
+        if not meta:
+            return 0.0
+        end_date_str = meta.get("endDate")
+        if not end_date_str:
+            return 0.0
+        try:
+            end_dt = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
+            hours = (end_dt - datetime.utcnow()).total_seconds() / 3600
+            return max(0.0, hours)
+        except Exception:
+            return 0.0
 
     def register_sports_position(
         self,
@@ -318,8 +398,11 @@ class PolymarketDataSource(DataSource):
                         no_price=price_update.no_price,
                         change_24h=0,
                         volume=price_update.volume or 0,
-                        hours_to_expiry=0,
-                        timestamp=price_update.timestamp or datetime.utcnow()
+                        hours_to_expiry=self._get_hours_to_expiry(token_id),
+                        timestamp=price_update.timestamp or datetime.utcnow(),
+                        best_bid=price_update.best_bid,
+                        best_ask=price_update.best_ask,
+                        spread=price_update.spread,
                     )
                 # else: WebSocket 数据太旧，用 HTTP fallback
 
@@ -331,7 +414,7 @@ class PolymarketDataSource(DataSource):
         import httpx
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, proxy=self._proxy_url) as client:
                 # 获取 token 信息
                 url = f"https://clob.polymarket.com/markets/{token_id}"
                 response = await client.get(url)
@@ -345,43 +428,39 @@ class PolymarketDataSource(DataSource):
                         no_price=data.get('no_price', 0.5),
                         change_24h=data.get('change24h', 0),
                         volume=data.get('volume', 0),
-                        hours_to_expiry=0,
-                        timestamp=datetime.utcnow()
+                        hours_to_expiry=self._get_hours_to_expiry(token_id),
+                        timestamp=datetime.utcnow(),
+                        best_bid=data.get('best_bid'),
+                        best_ask=data.get('best_ask'),
+                        spread=data.get('spread'),
                     )
         except Exception as e:
-            print(f"HTTP fallback failed for {token_id}: {e}")
+            logger.warning("HTTP fallback failed for %s: %s", token_id, e)
 
         return None
 
-    async def get_activity(self, token_id: str) -> Optional[ActivityData]:
-        """Get activity data from analyzer cache."""
+    async def get_activity(self, token_id: str, window_seconds: int = 60) -> Optional[ActivityData]:
+        """Get activity data from analyzer cache (time-windowed)."""
         if not self._activity_analyzer:
             return None
 
         # Look up condition_id from token_id mapping
         condition_id = self._token_to_condition.get(token_id, token_id)
 
-        # Get MarketActivity from ActivityAnalyzer cache
-        ma = self._activity_analyzer.get_market_by_condition(condition_id)
-        if ma:
+        # Get time-windowed metrics from ActivityAnalyzer
+        window_data = self._activity_analyzer.get_market_window(condition_id, window_seconds)
+        if window_data:
             return ActivityData(
                 market_id=condition_id,
-                netflow=ma.net_flow,
-                buy_volume=ma.yes_volume,
-                sell_volume=ma.no_volume,
-                unique_traders=ma.trader_count,
+                netflow=window_data["net_flow"],
+                buy_volume=window_data["yes_volume"],
+                sell_volume=window_data["no_volume"],
+                unique_traders=window_data["trader_count"],
                 timestamp=datetime.utcnow()
             )
 
-        # Fallback: empty data
-        return ActivityData(
-            market_id=condition_id,
-            netflow=0,
-            buy_volume=0,
-            sell_volume=0,
-            unique_traders=0,
-            timestamp=datetime.utcnow()
-        )
+        # No activity data available yet
+        return None
 
     async def get_sports_score(self, token_id: str) -> Optional[SportsScoreData]:
         """Get sports score from monitor"""
@@ -401,6 +480,12 @@ class PolymarketDataSource(DataSource):
             period=score_state.game_status,
             timestamp=score_state.last_updated,
         )
+
+    def get_sports_signal(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """Get sports-derived trading signal for a market (used in trigger logic)."""
+        if not self._sports_monitor:
+            return None
+        return self._sports_monitor.get_sports_signal(token_id)
 
 
 class SignalFilter:
@@ -450,12 +535,12 @@ class SignalFilter:
 class TriggerChecker:
     """Trigger condition checker using StrategyTrigger configuration"""
 
-    # 分层净流入阈值（来自 polymarket-agent）
+    # 分层净流入阈值（基于 60 秒滑动窗口，参考 polymarket-agent 阶段配置）
     # 注意：Stage 阈值必须避开死亡区间 (0.60-0.85)
     STAGE_THRESHOLDS = [
-        {'min_price': 0.95, 'max_price': 0.999, 'netflow': 2000},   # Stage1: 高概率
-        {'min_price': 0.90, 'max_price': 0.95, 'netflow': 1000},    # Stage2
-        {'min_price': 0.85, 'max_price': 0.90, 'netflow': 10000},   # Stage3: min 改为 0.85 避开死亡区间
+        {'min_price': 0.95, 'max_price': 0.999, 'netflow': 300},   # Stage1 Sweeping: 低门槛快进出
+        {'min_price': 0.90, 'max_price': 0.95, 'netflow': 150},    # Stage2 Forming: 中等门槛
+        {'min_price': 0.85, 'max_price': 0.90, 'netflow': 600},    # Stage3 Early: 高门槛建仓
         # Stage4 (0.70-0.80) 已删除 - 完全在死亡区间内，死代码
     ]
 
@@ -464,8 +549,8 @@ class TriggerChecker:
         self.min_trigger_interval = trigger.get('min_trigger_interval', 5)  # 5 分钟
         self.use_stage_netflow = trigger.get('use_stage_netflow', True)  # 使用分层阈值
 
-        # 基础净流入阈值（当不使用分层时）
-        self.base_netflow_threshold = trigger.get('activity_netflow_threshold', 1000)
+        # 基础净流入阈值（当不使用分层时，基于 60s 窗口）
+        self.base_netflow_threshold = trigger.get('activity_netflow_threshold', 150)
 
         self._last_trigger_time = last_trigger_time
 
@@ -540,6 +625,7 @@ class DataSourceManager:
         """Get or create data source"""
         async with self._lock:
             if portfolio_id not in self._sources:
+                logger.info("DataSourceManager: creating new source for portfolio %s type=%s", portfolio_id, source_type)
                 source_class = _DATA_SOURCE_REGISTRY.get(source_type)
                 if not source_class:
                     raise ValueError(f"Unknown data source type: {source_type}")
@@ -547,6 +633,7 @@ class DataSourceManager:
                 source = source_class(**kwargs)
                 await source.start()
                 self._sources[portfolio_id] = source
+                logger.info("DataSourceManager: source created for portfolio %s", portfolio_id)
 
                 # 创建过滤器和触发器
                 if filters:
@@ -576,6 +663,7 @@ class DataSourceManager:
         """Remove data source"""
         async with self._lock:
             if portfolio_id in self._sources:
+                logger.info("DataSourceManager: removing source for portfolio %s", portfolio_id)
                 await self._sources[portfolio_id].stop()
                 del self._sources[portfolio_id]
 
@@ -591,11 +679,16 @@ class DataSourceManager:
 
     async def close_all(self) -> None:
         """Close all data sources"""
-        for source in self._sources.values():
-            await source.stop()
+        logger.info("DataSourceManager: closing all %d sources", len(self._sources))
+        for portfolio_id, source in list(self._sources.items()):
+            try:
+                await source.stop()
+            except Exception as e:
+                logger.warning("DataSourceManager: error stopping source for portfolio %s: %s", portfolio_id, e)
         self._sources.clear()
         self._filters.clear()
         self._triggers.clear()
+        logger.info("DataSourceManager: all sources closed")
 
 
 # Global singleton

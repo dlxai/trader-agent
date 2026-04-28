@@ -80,7 +80,7 @@ class Settings(BaseSettings):
             )
         else:
             db_path = Path(__file__).resolve().parent.parent.parent / "jmwl_trading.db"
-            return f"sqlite+aiosqlite:///{db_path.as_posix()}"
+            return f"sqlite+aiosqlite:///{db_path.as_posix()}?timeout=30"
 
 
 @lru_cache

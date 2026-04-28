@@ -52,18 +52,30 @@
 
 **文件**: `entry_condition.py`
 
-验证市场是否满足买入条件：
+验证市场是否满足买入条件。已在 `StrategyRunner` 中通过 `_EntryConditionAdapter` 接入。
 
+**验证项**:
 - **价格区间检查**: 避免"死亡区间"（$0.60-$0.85）
 - **流动性检查**: 确保最小 $1000 流动性
-- **到期时间检查**: 避免即将到期的市场
-- **波动率检查**: 避免过高波动率的市场
+- **订单簿深度检查**: 确保最小 $500 深度
+- **到期时间检查**: 避免即将到期（<6h）或过远（>365d）的市场
+- **波动率检查**: 避免过高（>50%）或过低（<1%）波动率的市场
 
 **关键类**:
-- `EntryConditionValidator`: 入场条件验证器
+- `EntryConditionValidator`: 入场条件验证器（需传入 MarketInfoSource, LiquiditySource, VolatilitySource 协议实现）
 - `EntryConditionConfig`: 入场条件配置
 - `EntryValidationResult`: 验证结果
 - `EntryCheckResult`: 检查结果枚举
+
+**接入方式**:
+```python
+# StrategyRunner 内部使用 _EntryConditionAdapter 包装 MarketData
+adapter = _EntryConditionAdapter(market_data)
+validator = EntryConditionValidator(adapter, adapter, adapter, config=EntryConditionConfig(...))
+result = validator.validate(market_id, current_price=0.71)
+if not result.can_enter:
+    # 拒绝该市场
+```
 
 ### 4. 仓位大小计算模块 (Position Sizer)
 

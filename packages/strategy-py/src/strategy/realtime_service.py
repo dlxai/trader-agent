@@ -480,10 +480,12 @@ class RealtimeService(EventEmitter):
             if msg_type in ("trades", "orders_matched"):
                 if not hasattr(self, "_activity_count"):
                     self._activity_count = 0
+                    logger.info("[Activity] First activity message received, type=%s", msg_type)
                 self._activity_count += 1
                 if self._activity_count % 100 == 1:
-                    logger.debug(
-                        f"Activity message #{self._activity_count}: type={msg_type}, payload keys={list(payload.keys())}"
+                    logger.info(
+                        "[Activity] message #%d: type=%s, conditionId=%s",
+                        self._activity_count, msg_type, payload.get("conditionId", "N/A"),
                     )
 
                 self.emit("activity_trade", payload)

@@ -65,8 +65,10 @@ export const DEFAULT_FILTERS = {
   dead_zone_max: 0.8,
   keywords_exclude: ['o/u', 'spread'],
 
-  // 到期时间过滤：超过这个小时数的市场不交易
-  max_hours_to_expiry: 6,  // 通用：6小时内
+  // 到期时间策略（由 ExpiryPolicy 统一处理）
+  min_hours_to_expiry: 1,           // 最小到期时间（小时）
+  max_days_to_expiry: 14,           // 最大到期时间（天）
+  avoid_last_minutes_before_expiry: 30, // 结算前规避（分钟）
 };
 
 // 尾盘策略预设值
@@ -74,7 +76,9 @@ export const TAIL_FILTERS = {
   ...DEFAULT_FILTERS,
   min_price: 0.95,
   max_price: 0.99,
-  max_hours_to_expiry: 2,  // 尾盘：2小时内
+  min_hours_to_expiry: 0.5,
+  max_days_to_expiry: 0.25,  // 6小时
+  avoid_last_minutes_before_expiry: 10,
 };
 
 // Sports 策略预设值（更关注比分和 Activity）
@@ -82,7 +86,9 @@ export const SPORTS_FILTERS = {
   ...DEFAULT_FILTERS,
   min_price: 0.3,
   max_price: 0.95,
-  max_hours_to_expiry: 4,
+  min_hours_to_expiry: 0.5,
+  max_days_to_expiry: 2,
+  avoid_last_minutes_before_expiry: 15,
   dead_zone_enabled: false,  // Sports 市场不需要死区
 };
 

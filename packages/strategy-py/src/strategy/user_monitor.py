@@ -197,6 +197,8 @@ class UserMonitor:
         """处理单个 WebSocket 消息"""
         try:
             data = json.loads(message)
+            if isinstance(data, list):
+                return
             msg_type = data.get("type", "")
 
             if msg_type == "order_fill":

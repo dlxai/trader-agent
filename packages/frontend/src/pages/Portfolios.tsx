@@ -150,6 +150,10 @@ export default function PortfoliosPage() {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!newPortfolio.name.trim()) {
+      alert('组合名称不能为空')
+      return
+    }
     createMutation.mutate(newPortfolio)
   }
 

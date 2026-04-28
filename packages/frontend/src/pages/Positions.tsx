@@ -25,7 +25,7 @@ import {
 
 export default function PositionsPage() {
   const [searchQuery, setSearchQuery] = useState('')
-  const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'symbol'>('value')
+  const [sortBy, setSortBy] = useState<'value' | 'pnl' | 'name'>('value')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   const { data: positionsResponse, isLoading } = useQuery({
@@ -37,7 +37,7 @@ export default function PositionsPage() {
 
   const filteredPositions = positions.filter(
     (pos) =>
-      pos.symbol.toLowerCase().includes(searchQuery.toLowerCase())
+      (pos.title || pos.market_name || '').toLowerCase().includes(searchQuery.toLowerCase())
   )
 
   const sortedPositions = filteredPositions.sort((a, b) => {
@@ -49,8 +49,8 @@ export default function PositionsPage() {
       case 'pnl':
         comparison = Number(a.unrealized_pnl) - Number(b.unrealized_pnl)
         break
-      case 'symbol':
-        comparison = a.symbol.localeCompare(b.symbol)
+      case 'name':
+        comparison = (a.title || a.market_name || '').localeCompare(b.title || b.market_name || '')
         break
     }
     return sortOrder === 'asc' ? comparison : -comparison
@@ -150,12 +150,7 @@ export default function PositionsPage() {
                   return (
                     <TableRow key={position.id}>
                       <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <span className="text-foreground">{position.symbol}</span>
-                          <Badge variant="outline" className="text-2xs">
-                            {position.market_id}
-                          </Badge>
-                        </div>
+                        <span className="text-foreground">{position.title || position.market_name || position.symbol}</span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {position.portfolio?.name || '-'}
@@ -165,7 +160,7 @@ export default function PositionsPage() {
                           variant={position.side === 'yes' ? 'success' : 'error'}
                           className="capitalize"
                         >
-                          {position.side}
+                          {position.outcome || position.side}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-mono">

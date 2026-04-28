@@ -5,13 +5,13 @@ import logging
 import sys
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, List, Any, Callable
+from typing import Dict, Optional, List, Any, Callable, Tuple
 from uuid import UUID
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("worker.datasource")
 
 # 添加 strategy-py 到路径
 _backend_py_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -129,11 +129,28 @@ class PolymarketDataSource(DataSource):
         # token_id -> condition_id 映射（用于 ActivityAnalyzer 查询）
         self._token_to_condition: Dict[str, str] = {}
 
+        # condition_id -> token_id 映射（从 WebSocket activity feed 收集）
+        self._condition_to_token: Dict[str, str] = {}
+        self._condition_token_yes: Dict[str, str] = {}
+        self._condition_token_no: Dict[str, str] = {}
+
         # 市场元数据缓存（token_id -> market dict，用于计算 hours_to_expiry 等）
         self._market_meta_cache: Dict[str, Dict[str, Any]] = {}
 
-        # 市场双窗口触发处理器（condition_id, trigger_data）
+        # condition_id -> 基础市场元数据（从 WebSocket activity feed 收集，用于 cache miss 时构造最小市场）
+        self._condition_meta_cache: Dict[str, Dict[str, Any]] = {}
+
+        # 价格更新回调处理器 (token_id, price)
+        self._price_handlers: List[Callable[[str, float], None]] = []
+
+        # 热点市场回调处理器 (condition_id, window_data)
+        self._hot_market_handlers: List[Callable[[str, Dict[str, Any]], None]] = []
+
+        # 市场双窗口触发回调处理器
         self._market_trigger_handlers: List[Callable[[str, Dict[str, Any]], None]] = []
+
+        # 事件循环引用（用于线程安全回调）
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
     def source_type(self) -> str:
@@ -144,11 +161,15 @@ class PolymarketDataSource(DataSource):
         import asyncio
 
         self._running = True
+        self._loop = asyncio.get_running_loop()
         logger.info("PolymarketDataSource: starting WebSocket connections...")
 
         # 1. 启动价格监控 (持仓 token 价格)
         try:
-            self._price_monitor = PriceMonitor(proxy_url=self._proxy_url)
+            self._price_monitor = PriceMonitor(
+                proxy_url=self._proxy_url,
+                on_price_update=self._on_price_update,
+            )
             await asyncio.wait_for(self._price_monitor.start(), timeout=5.0)
             logger.info("PolymarketDataSource: PriceMonitor started")
         except Exception as e:
@@ -157,10 +178,8 @@ class PolymarketDataSource(DataSource):
 
         # 2. 启动 Activity 分析器 (纯数据分析器，无需 start)
         self._activity_analyzer = ActivityAnalyzer()
-        # 注册双窗口确认触发回调（同步回调内创建异步任务）
-        self._activity_analyzer.on_dual_window_trigger(
-            lambda cid, td: asyncio.create_task(self._on_dual_window_trigger(cid, td))
-        )
+        # 注册热点市场回调（显著资金流时触发策略评估）
+        self._activity_analyzer.on_hot_market(self._on_hot_market)
         logger.info("PolymarketDataSource: ActivityAnalyzer initialized")
 
         # 3. 启动 RealtimeService 订阅全市场交易活动
@@ -208,9 +227,19 @@ class PolymarketDataSource(DataSource):
         """Handle activity trade from Live Data WebSocket."""
         if not self._activity_analyzer:
             return
+        # Log full payload keys once to understand the data format
+        if not hasattr(self, "_activity_payload_logged"):
+            self._activity_payload_logged = True
+            logger.info("[Activity] payload keys: %s", list(payload.keys()))
+            # Print a redacted sample of the first payload
+            sample = {k: (v if k in ("conditionId", "assetId", "tokenId", "marketId", "side", "outcome", "price", "slug", "title") else "...") for k, v in payload.items()}
+            logger.info("[Activity] payload sample: %s", sample)
+
         # Live Data activity format uses camelCase conditionId
+        # 'asset' field is the CLOB token_id (asset_id)
         adapted = {
             "condition_id": payload.get("conditionId") or payload.get("market_id") or payload.get("condition_id", ""),
+            "asset_id": payload.get("asset") or payload.get("assetId") or payload.get("asset_id") or payload.get("tokenId") or payload.get("token_id") or "",
             "slug": payload.get("slug", ""),
             "title": payload.get("title", ""),
             "trader_address": payload.get("trader_address", ""),
@@ -220,7 +249,31 @@ class PolymarketDataSource(DataSource):
             "price": payload.get("price", 0.5),
         }
         if adapted["condition_id"]:
-            logger.info("[Activity] processing trade for %s, side=%s, amount=%s", adapted["condition_id"], adapted["side"], adapted["amount"])
+            logger.debug("[Activity] processing trade for %s, asset_id=%s, side=%s, amount=%s", adapted["condition_id"], adapted.get("asset_id") or "N/A", adapted["side"], adapted["amount"])
+            cid = adapted["condition_id"]
+            asset = adapted.get("asset_id")
+            if asset:
+                self._condition_to_token[cid] = asset
+                outcome = adapted.get("outcome", "YES").upper()
+                if outcome in ("YES", "Y", "UP"):
+                    self._condition_token_yes[cid] = asset
+                elif outcome in ("NO", "N", "DOWN"):
+                    self._condition_token_no[cid] = asset
+            # Cache minimal metadata for cache-miss recovery
+            if cid not in self._condition_meta_cache:
+                self._condition_meta_cache[cid] = {}
+            meta = self._condition_meta_cache[cid]
+            if adapted.get("slug"):
+                meta["slug"] = adapted["slug"]
+            if adapted.get("title"):
+                meta["question"] = adapted["title"]
+            if asset:
+                meta.setdefault("tokens", [])
+                # Deduplicate tokens by asset id
+                existing = {t.get("token_id") or t.get("clobTokenId") for t in meta["tokens"]}
+                if asset not in existing:
+                    outcome_label = adapted.get("outcome", "Yes")
+                    meta["tokens"].append({"token_id": asset, "outcome": outcome_label})
         self._activity_analyzer.process_trade(adapted)
 
     async def stop(self) -> None:
@@ -267,6 +320,26 @@ class PolymarketDataSource(DataSource):
         condition_id = market_meta.get("conditionId") or market_meta.get("condition_id")
         if condition_id:
             self._token_to_condition[token_id] = condition_id
+
+    def get_condition_token_map(self) -> Dict[str, str]:
+        """Return condition_id -> token_id map built from WebSocket activity feed."""
+        return self._condition_to_token.copy()
+
+    def get_condition_tokens(self, condition_id: str) -> Tuple[Optional[str], Optional[str]]:
+        """Return (yes_token_id, no_token_id) for a condition_id from WebSocket feed."""
+        yes_tid = self._condition_token_yes.get(condition_id)
+        no_tid = self._condition_token_no.get(condition_id)
+        # Fallback: if only one side known, try to infer from single mapping
+        if not yes_tid and not no_tid:
+            single = self._condition_to_token.get(condition_id)
+            if single:
+                # We don't know which side; return as yes to allow price lookup
+                yes_tid = single
+        return (yes_tid, no_tid)
+
+    def get_condition_meta(self, condition_id: str) -> Optional[Dict[str, Any]]:
+        """Return minimal market metadata from WebSocket feed for cache-miss recovery."""
+        return self._condition_meta_cache.get(condition_id)
 
     def _get_hours_to_expiry(self, token_id: str) -> float:
         """Calculate hours to expiry from cached market metadata."""
@@ -386,6 +459,44 @@ class PolymarketDataSource(DataSource):
         if handler in self._market_trigger_handlers:
             self._market_trigger_handlers.remove(handler)
 
+    def _on_price_update(self, price_update) -> None:
+        """转发 PriceMonitor 价格更新到所有注册处理器（线程安全投递到事件循环）。"""
+        if not self._loop:
+            return
+        for handler in self._price_handlers:
+            try:
+                self._loop.call_soon_threadsafe(handler, price_update.token_id, price_update.price)
+            except Exception as e:
+                logger.error("Price handler error: %s", e)
+
+    def register_price_handler(self, handler: Callable[[str, float], None]) -> None:
+        """注册价格更新处理器。"""
+        self._price_handlers.append(handler)
+
+    def unregister_price_handler(self, handler: Callable[[str, float], None]) -> None:
+        """注销价格更新处理器。"""
+        if handler in self._price_handlers:
+            self._price_handlers.remove(handler)
+
+    def register_hot_market_handler(self, handler: Callable[[str, Dict[str, Any]], None]) -> None:
+        """注册热点市场处理器（当 ActivityAnalyzer 检测到显著流时触发）。"""
+        self._hot_market_handlers.append(handler)
+
+    def unregister_hot_market_handler(self, handler: Callable[[str, Dict[str, Any]], None]) -> None:
+        """注销热点市场处理器。"""
+        if handler in self._hot_market_handlers:
+            self._hot_market_handlers.remove(handler)
+
+    def _on_hot_market(self, condition_id: str, window_data: Dict[str, Any]) -> None:
+        """转发热点市场事件到所有注册处理器（线程安全投递到事件循环）。"""
+        if not self._loop:
+            return
+        for handler in self._hot_market_handlers:
+            try:
+                self._loop.call_soon_threadsafe(handler, condition_id, window_data)
+            except Exception as e:
+                logger.error("Hot market handler error: %s", e)
+
     async def _on_dual_window_trigger(self, condition_id: str, trigger_data: Dict[str, Any]) -> None:
         """转发 ActivityAnalyzer 的双窗口触发事件到所有注册处理器。"""
         logger.info(
@@ -400,7 +511,7 @@ class PolymarketDataSource(DataSource):
             except Exception as e:
                 logger.error("Market trigger handler error: %s", e)
 
-    async def get_market_data(self, token_id: str, fallback_timeout: int = 10) -> Optional[MarketData]:
+    async def get_market_data(self, token_id: str, fallback_timeout: int = 3) -> Optional[MarketData]:
         """Get market data from price monitor (WebSocket优先，HTTP fallback)
 
         Args:
@@ -419,10 +530,10 @@ class PolymarketDataSource(DataSource):
                     return MarketData(
                         market_id=token_id,
                         token_id=token_id,
-                        yes_price=price_update.yes_price,
-                        no_price=price_update.no_price,
-                        change_24h=0,
-                        volume=price_update.volume or 0,
+                        yes_price=price_update.price,
+                        no_price=1 - price_update.price,
+                        change_24h=price_update.change_24h or 0,
+                        volume=price_update.volume_24h or 0,
                         hours_to_expiry=self._get_hours_to_expiry(token_id),
                         timestamp=price_update.timestamp or datetime.utcnow(),
                         best_bid=price_update.best_bid,
@@ -440,24 +551,24 @@ class PolymarketDataSource(DataSource):
 
         try:
             async with httpx.AsyncClient(timeout=10.0, proxy=self._proxy_url) as client:
-                # 获取 token 信息
-                url = f"https://clob.polymarket.com/markets/{token_id}"
+                url = f"https://clob.polymarket.com/last-trade-price?token_id={token_id}"
                 response = await client.get(url)
 
                 if response.status_code == 200:
                     data = response.json()
+                    price = float(data) if not isinstance(data, dict) else float(data.get("price", 0.5))
                     return MarketData(
                         market_id=token_id,
                         token_id=token_id,
-                        yes_price=data.get('yes_price', 0.5),
-                        no_price=data.get('no_price', 0.5),
-                        change_24h=data.get('change24h', 0),
-                        volume=data.get('volume', 0),
+                        yes_price=price,
+                        no_price=1 - price,
+                        change_24h=0,
+                        volume=0,
                         hours_to_expiry=self._get_hours_to_expiry(token_id),
                         timestamp=datetime.utcnow(),
-                        best_bid=data.get('best_bid'),
-                        best_ask=data.get('best_ask'),
-                        spread=data.get('spread'),
+                        best_bid=None,
+                        best_ask=None,
+                        spread=None,
                     )
         except Exception as e:
             logger.warning("HTTP fallback failed for %s: %s", token_id, e)
@@ -486,6 +597,56 @@ class PolymarketDataSource(DataSource):
 
         # No activity data available yet
         return None
+
+    def get_hot_markets(self, limit: int = 50, min_score: float = 0.1) -> list[dict]:
+        """Get hot markets from ActivityAnalyzer (WebSocket-driven).
+
+        Returns market dicts compatible with strategy_runner's _get_available_markets.
+        Each dict contains condition_id, slug, question, token_id, and activity metrics.
+        """
+        if not self._activity_analyzer:
+            return []
+
+        hot = self._activity_analyzer.get_hot_markets(limit=limit, min_score=min_score)
+        result = []
+        for m in hot:
+            result.append({
+                "condition_id": m.condition_id,
+                "conditionId": m.condition_id,
+                "slug": m.slug,
+                "question": m.question,
+                "title": m.question,
+                "active": True,
+                "token_id": m.token_id,
+                "tokens": [{"token_id": m.token_id, "outcome": "Up"}] if m.token_id else [],
+                "volume": m.total_volume,
+                "current_price": m.current_price,
+            })
+        return result
+
+    def is_healthy(self, max_staleness: float = 60.0) -> bool:
+        """Check if price monitor is connected and data is fresh.
+
+        Args:
+            max_staleness: max seconds since last price update before considered stale.
+        """
+        if not self._price_monitor:
+            return False
+        stats = self._price_monitor.get_stats()
+        if not stats.get("ws_connected"):
+            return False
+        last_update = stats.get("last_update_time")
+        if not last_update:
+            return False
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(last_update)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            staleness = (datetime.now(timezone.utc) - dt).total_seconds()
+            return staleness <= max_staleness
+        except Exception:
+            return False
 
     async def get_sports_score(self, token_id: str) -> Optional[SportsScoreData]:
         """Get sports score from monitor"""
@@ -526,26 +687,23 @@ class SignalFilter:
         self.dead_zone_min = filters.get('dead_zone_min', 0.60)
         self.dead_zone_max = filters.get('dead_zone_max', 0.85)
         self.keywords_exclude = filters.get('keywords_exclude', ['o/u', 'spread'])
-        self.max_hours_to_expiry = filters.get('max_hours_to_expiry', 6)
 
     def filter_market(self, market_data: MarketData) -> bool:
         """
-        过滤市场数据，返回 True 表示通过过滤
+        过滤市场数据，返回 True 表示通过过滤。
+        注意：到期时间检查已集中到 ExpiryPolicy，此处不再拦截。
         """
-        # 1. 价格区间过滤
         price = market_data.yes_price
+        # 1. 价格区间过滤
         if not (self.min_price <= price <= self.max_price):
+            logger.info("[FILTER] price %.4f outside range [%.2f, %.2f]", price, self.min_price, self.max_price)
             return False
 
         # 2. 死亡区间过滤
         if self.dead_zone_enabled:
             if self.dead_zone_min <= price <= self.dead_zone_max:
+                logger.info("[FILTER] price %.4f in dead zone [%.2f, %.2f]", price, self.dead_zone_min, self.dead_zone_max)
                 return False  # 在死亡区间内，不交易
-
-        # 3. 到期时间过滤
-        if self.max_hours_to_expiry > 0:
-            if market_data.hours_to_expiry > self.max_hours_to_expiry:
-                return False  # 超过最大到期时间
 
         return True
 

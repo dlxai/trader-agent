@@ -20,7 +20,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { LoadingScreen } from '@/components/ui/LoadingScreen'
-import { strategiesApi, providersApi } from '@/lib/api'
+import { strategiesApi, providersApi, portfoliosApi } from '@/lib/api'
 import type { StrategySummary, CreateStrategyRequest, UpdateStrategyRequest } from '@/types'
 import {
   formatCurrency,
@@ -72,8 +72,10 @@ const tabLabels: Record<string, string> = {
   risk: '风险控制',
 }
 
-function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit, isLoading }: { strategy: StrategySummary; onDelete: (id: string) => void; onStart: (id: string) => void; onStop: (id: string) => void; onEdit: (strategy: StrategySummary) => void; isLoading?: boolean }) {
+function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit, isLoading, portfolios }: { strategy: StrategySummary; onDelete: (id: string) => void; onStart: (id: string) => void; onStop: (id: string) => void; onEdit: (strategy: StrategySummary) => void; isLoading?: boolean; portfolios: any[] }) {
   const pnlIsPositive = Number(strategy.total_pnl) >= 0
+  const portfolioName = portfolios.find(p => p.id === strategy.portfolio_id)?.name || '未绑定组合'
+  const hasPortfolio = !!strategy.portfolio_id
 
   return (
     <Card className="group transition-all hover:border-emerald-500/30 hover:shadow-lg hover:shadow-emerald-500/5">
@@ -81,6 +83,7 @@ function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit, isLoading }
         <div className="flex items-start justify-between">
           <div>
             <CardTitle className="text-lg">{strategy.name}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">{portfolioName}</p>
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -154,7 +157,21 @@ function StrategyCard({ strategy, onDelete, onStart, onStop, onEdit, isLoading }
               {isLoading ? '停止中...' : '停止'}
             </Button>
           ) : (
-            <Button variant="outline" size="sm" className="flex-1" disabled={isLoading} isLoading={isLoading} onClick={() => onStart(strategy.id)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              disabled={isLoading || !hasPortfolio}
+              isLoading={isLoading}
+              onClick={() => {
+                if (!hasPortfolio) {
+                  alert('请先绑定投资组合')
+                  return
+                }
+                onStart(strategy.id)
+              }}
+              title={hasPortfolio ? '启动策略' : '请先绑定投资组合'}
+            >
               <Play className="mr-2 h-4 w-4" />
               {isLoading ? '启动中...' : '启动'}
             </Button>
@@ -182,6 +199,7 @@ export default function StrategiesPage() {
     min_order_size: 1,
     max_order_size: 5,
     provider_id: '',
+    portfolio_id: '',
   })
 
   // Full config state
@@ -206,6 +224,14 @@ export default function StrategiesPage() {
   })
 
   const providers = providersData || []
+
+  // Fetch portfolios from backend
+  const { data: portfoliosData } = useQuery({
+    queryKey: ['portfolios'],
+    queryFn: () => portfoliosApi.getAll(),
+  })
+
+  const portfolios = portfoliosData?.items || []
 
   const { data: strategiesResponse, isLoading } = useQuery({
     queryKey: ['strategies'],
@@ -258,6 +284,7 @@ export default function StrategiesPage() {
     mutationFn: (id: string) => strategiesApi.start(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['strategies'] })
+      alert('策略已启动')
     },
     onError: (error: any) => {
       console.error('Start strategy error:', error)
@@ -270,6 +297,7 @@ export default function StrategiesPage() {
     mutationFn: (id: string) => strategiesApi.stop(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['strategies'] })
+      alert('策略已停止')
     },
     onError: (error: any) => {
       console.error('Stop strategy error:', error)
@@ -313,6 +341,7 @@ export default function StrategiesPage() {
         min_order_size: strategy.min_order_size,
         max_order_size: strategy.max_order_size,
         provider_id: strategy.provider_id || '',
+        portfolio_id: strategy.portfolio_id || '',
       })
       setConfig({
         template: 'generic',
@@ -340,10 +369,15 @@ export default function StrategiesPage() {
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!newStrategy.name.trim()) {
+      alert('策略名称不能为空')
+      return
+    }
     // Flatten config for backend API
     const strategyData: CreateStrategyRequest = {
       ...newStrategy,
       provider_id: newStrategy.provider_id || undefined,
+      portfolio_id: newStrategy.portfolio_id || undefined,
       type: 'ai' as const,
       // Data sources
       data_sources: config.data_sources,
@@ -378,6 +412,7 @@ export default function StrategiesPage() {
       name: newStrategy.name,
       description: newStrategy.description,
       provider_id: newStrategy.provider_id || undefined,
+      portfolio_id: newStrategy.portfolio_id || undefined,
       data_sources: config.data_sources,
       trigger: config.trigger,
       filters: config.filters,
@@ -393,7 +428,7 @@ export default function StrategiesPage() {
 
   // Reset form to defaults
   const resetForm = () => {
-    setNewStrategy({ name: '', description: '', min_order_size: 10, max_order_size: 100, provider_id: '' })
+    setNewStrategy({ name: '', description: '', min_order_size: 10, max_order_size: 100, provider_id: '', portfolio_id: '' })
     setConfig({
       template: 'generic',
       data_sources: DEFAULT_DATA_SOURCES,
@@ -562,6 +597,24 @@ export default function StrategiesPage() {
                             }))
                           }
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="portfolio_id">投资组合</Label>
+                        <select
+                          id="portfolio_id"
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          value={newStrategy.portfolio_id || ''}
+                          onChange={(e) =>
+                            setNewStrategy((prev) => ({ ...prev, portfolio_id: e.target.value }))
+                          }
+                        >
+                          <option value="">选择投资组合...</option>
+                          {portfolios.map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
@@ -837,6 +890,61 @@ export default function StrategiesPage() {
                             </div>
                           </div>
                         )}
+                      </div>
+                      <Separator />
+                      <div className="space-y-2">
+                        <Label className="font-medium">到期时间策略</Label>
+                        <p className="text-xs text-muted-foreground">由 ExpiryPolicy 统一处理，SignalFilter 不再拦截时间</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="min_hours_to_expiry">最小到期时间 (小时)</Label>
+                          <Input
+                            id="min_hours_to_expiry"
+                            type="number"
+                            step="0.5"
+                            value={config.filters.min_hours_to_expiry}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, min_hours_to_expiry: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">避免太早入场</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="max_days_to_expiry">最大到期时间 (天)</Label>
+                          <Input
+                            id="max_days_to_expiry"
+                            type="number"
+                            step="0.5"
+                            value={config.filters.max_days_to_expiry}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, max_days_to_expiry: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">避免资金锁死</p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="avoid_last_minutes_before_expiry">结算前规避 (分钟)</Label>
+                          <Input
+                            id="avoid_last_minutes_before_expiry"
+                            type="number"
+                            step="5"
+                            value={config.filters.avoid_last_minutes_before_expiry}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, avoid_last_minutes_before_expiry: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">临近结算不交易</p>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1183,6 +1291,24 @@ export default function StrategiesPage() {
                           }
                         />
                       </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-portfolio_id">投资组合</Label>
+                        <select
+                          id="edit-portfolio_id"
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          value={newStrategy.portfolio_id || ''}
+                          onChange={(e) =>
+                            setNewStrategy((prev) => ({ ...prev, portfolio_id: e.target.value }))
+                          }
+                        >
+                          <option value="">选择投资组合...</option>
+                          {portfolios.map((p: any) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="edit-min_order_size">最小下单金额</Label>
@@ -1345,6 +1471,39 @@ export default function StrategiesPage() {
                     <div className="space-y-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
+                          <Label htmlFor="edit-min_confidence">最小置信度</Label>
+                          <Input
+                            id="edit-min_confidence"
+                            type="number"
+                            min="0"
+                            max="100"
+                            value={config.filters.min_confidence}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, min_confidence: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-max_spread">最大价差 (%)</Label>
+                          <Input
+                            id="edit-max_spread"
+                            type="number"
+                            step="0.1"
+                            value={config.filters.max_spread}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, max_spread: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
                           <Label htmlFor="edit-min_price">最小价格</Label>
                           <Input
                             id="edit-min_price"
@@ -1383,7 +1542,7 @@ export default function StrategiesPage() {
                       <div className="flex items-center justify-between">
                         <div>
                           <Label>死区过滤</Label>
-                          <p className="text-xs text-muted-foreground">0.70-0.80 价格区间不交易</p>
+                          <p className="text-xs text-muted-foreground">0.60-0.85 价格区间不交易</p>
                         </div>
                         <Switch
                           checked={config.filters.dead_zone_enabled}
@@ -1435,19 +1594,55 @@ export default function StrategiesPage() {
                       )}
                       <Separator />
                       <div className="space-y-2">
-                        <Label htmlFor="edit-max_hours_to_expiry">最大到期时间 (小时)</Label>
-                        <Input
-                          id="edit-max_hours_to_expiry"
-                          type="number"
-                          value={config.filters.max_hours_to_expiry}
-                          onChange={(e) =>
-                            setConfig((prev: any) => ({
-                              ...prev,
-                              filters: { ...prev.filters, max_hours_to_expiry: Number(e.target.value) },
-                            }))
-                          }
-                        />
-                        <p className="text-xs text-muted-foreground">超过此小时数的市场不交易</p>
+                        <Label className="font-medium">到期时间策略</Label>
+                        <p className="text-xs text-muted-foreground">由 ExpiryPolicy 统一处理，SignalFilter 不再拦截时间</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-min_hours_to_expiry">最小到期时间 (小时)</Label>
+                          <Input
+                            id="edit-min_hours_to_expiry"
+                            type="number"
+                            step="0.5"
+                            value={config.filters.min_hours_to_expiry}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, min_hours_to_expiry: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-max_days_to_expiry">最大到期时间 (天)</Label>
+                          <Input
+                            id="edit-max_days_to_expiry"
+                            type="number"
+                            step="0.5"
+                            value={config.filters.max_days_to_expiry}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, max_days_to_expiry: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="edit-avoid_last_minutes_before_expiry">结算前规避 (分钟)</Label>
+                          <Input
+                            id="edit-avoid_last_minutes_before_expiry"
+                            type="number"
+                            step="5"
+                            value={config.filters.avoid_last_minutes_before_expiry}
+                            onChange={(e) =>
+                              setConfig((prev: any) => ({
+                                ...prev,
+                                filters: { ...prev.filters, avoid_last_minutes_before_expiry: Number(e.target.value) },
+                              }))
+                            }
+                          />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1455,6 +1650,24 @@ export default function StrategiesPage() {
                   {/* AI Tab */}
                   {selectedTab === 'ai' && (
                     <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-provider_id">AI Provider</Label>
+                        <select
+                          id="edit-provider_id"
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                          value={newStrategy.provider_id || ''}
+                          onChange={(e) =>
+                            setNewStrategy((prev) => ({ ...prev, provider_id: e.target.value }))
+                          }
+                        >
+                          <option value="">选择 Provider...</option>
+                          {providers.map((provider: any) => (
+                            <option key={provider.id} value={provider.id}>
+                              {provider.name} ({provider.provider_type || provider.provider})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                       <div className="space-y-2">
                         <Label htmlFor="edit-system_prompt">System Prompt</Label>
                         <textarea
@@ -1624,6 +1837,7 @@ export default function StrategiesPage() {
               onStop={(id) => stopMutation.mutate(id)}
               onEdit={handleEdit}
               isLoading={startMutation.isPending || stopMutation.isPending || deleteMutation.isPending || updateMutation.isPending}
+              portfolios={portfolios}
             />
           ))}
         </div>

@@ -236,6 +236,75 @@ docker-compose up -d --remove-orphans
 └─────────────────┘
 ```
 
+## Strategy Execution Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Data Sources                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Gamma API (REST)      │ Market list, title, endDate, initial price         │
+│  ws-live-data (WS)     │ Real-time price, order book, trade activity        │
+│  sports-api.ws (WS)    │ Live scores, goals, red cards, game phase          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         PolymarketDataSource                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  PriceMonitor          │ WebSocket price cache (best_bid, best_ask, spread) │
+│  ActivityAnalyzer      │ Trade flow analysis (volume, netflow, whales)      │
+│  RealtimeService       │ WS client forwarding trades → ActivityAnalyzer     │
+│  SportsMarketMonitor   │ Score cache for ALL markets (not just positions)   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    StrategyRunner._execute_strategy()                         │
+│                    (main loop polled by strategy interval)                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Step 1: Fetch Gamma open market list                                         │
+│  Step 2: Push market metadata to data source (endDate → hours_to_expiry)      │
+│  Step 3: Sync on-chain positions                                              │
+│  Step 4: For each market:                                                     │
+│    ├─ Tier 1: Activity Pre-Filter (PRIMARY GATE)                              │
+│    │     └── unique_traders >= 3 OR abs(netflow) >= 100                       │
+│    │     └── Dead/cold markets skipped before price fetch                     │
+│    ├─ Tier 2: SignalFilter (price range, dead zone, expiry, keywords)         │
+│    ├─ Tier 3: EntryConditionValidator (liquidity >= 1000, orderbook depth)    │
+│    ├─ Tier 4: TriggerChecker                                                  │
+│    │     ├── AND logic: price_change% >= threshold AND activity_netflow >= tier│
+│    │     └── OR Sports override: strong game events bypass the gate           │
+│    ├─ Tier 5: BuyStrategy.evaluate()                                          │
+│    │     ├── 6-factor scoring:                                                │
+│    │     │    odds_bias, time_decay, orderbook_pressure, capital_flow,        │
+│    │     │    information_edge, sports_momentum                               │
+│    │     └── Composite score vs thresholds                                    │
+│    ├─ Tier 6: AI Analysis (LLM with market data + factor scores)              │
+│    │     └── Returns: action / side / confidence / stop_loss / take_profit    │
+│    └─ Tier 7: Order placement (py-clob-client on-chain)                       │
+│  Step 5: Position monitoring (dynamic stop-loss via sports scores + flow)     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+### Filter Logic Details
+
+| Tier | Component | Purpose | Reject Criteria |
+|------|-----------|---------|-----------------|
+| 1 | Activity Pre-Filter | Eliminate dead markets early | `traders < 3` AND `\|netflow\| < 100` |
+| 2 | SignalFilter | Basic market properties | Price outside range, in dead zone, expired, keyword match |
+| 3 | EntryConditionValidator | Liquidity & depth check | `liquidity < 1000` or `orderbook_depth < 500` |
+| 4 | TriggerChecker | Multi-factor confirmation | Neither price nor activity triggered (unless sports strong) |
+| 5 | BuyStrategy | Quantitative scoring | Composite score below `buy_threshold` (0.65) |
+| 6 | AI Decision | LLM discretion | Action != "buy" or confidence too low |
+
+### Data Source Integration
+
+| Source | Used In | Metric |
+|--------|---------|--------|
+| Activity (RealtimeService) | Tier 1, 4, 5 | `unique_traders`, `netflow`, `volume`, `whale_count` |
+| PriceMonitor (WebSocket) | Tier 2, 3, 4, 5 | `yes_price`, `best_bid`, `best_ask`, `spread` |
+| SportsMonitor | Tier 4 (override), 5 | `score_diff`, `game_status`, `time_remaining` |
+| Gamma API | Tier 2 | `endDate` → `hours_to_expiry`, `question` (keywords) |
+
 ## API Documentation
 
 ### Health Endpoints

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     AsyncEngine,
 )
+from sqlalchemy import text
 from sqlalchemy.orm import declarative_base, DeclarativeBase
 from sqlalchemy.pool import NullPool
 
@@ -52,6 +53,10 @@ async def init_db():
     """Initialize database (create all tables)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Enable WAL mode for SQLite to improve concurrency
+        if settings.DATABASE_TYPE == "sqlite":
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+            await conn.execute(text("PRAGMA synchronous=NORMAL"))
 
 
 async def close_db():

@@ -1,14 +1,18 @@
 """Strategy runner service for scheduled execution."""
 
 import asyncio
+import concurrent.futures
+import json
 import logging
 import sys
 import os
+import time
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple, Callable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from sqlalchemy import select
@@ -22,16 +26,10 @@ if _proxy_url:
     if not os.environ.get("HTTPS_PROXY"):
         os.environ["HTTPS_PROXY"] = _proxy_url
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("worker.strategy")
 
-# Dedicated strategy execution logger (always flushes immediately)
-_strategy_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs", "strategy.log")
-_strategy_handler = logging.FileHandler(_strategy_log_path, encoding="utf-8")
-_strategy_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+# strategy_exec logger configured by setup_logging("worker") in worker.py
 strategy_exec_logger = logging.getLogger("strategy_exec")
-strategy_exec_logger.setLevel(logging.DEBUG)
-if not strategy_exec_logger.handlers:
-    strategy_exec_logger.addHandler(_strategy_handler)
 
 # Ensure strategy-py is importable
 _backend_py_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,6 +67,7 @@ from strategy.capital_flow_analyzer import (
     DecisionAction,
 )
 from strategy.entry_condition import EntryConditionValidator, EntryConditionConfig
+from src.trading_engine.expiry_policy import ExpiryPolicy, ExpiryAction
 
 
 class _EntryConditionAdapter:
@@ -80,8 +79,9 @@ class _EntryConditionAdapter:
     additional async I/O.
     """
 
-    def __init__(self, market_data: MarketData):
+    def __init__(self, market_data: MarketData, market_dict: Optional[Dict[str, Any]] = None):
         self._md = market_data
+        self._market_dict = market_dict or {}
 
     def get_market_info(self, market_id: str) -> Dict[str, Any]:
         return {
@@ -100,13 +100,53 @@ class _EntryConditionAdapter:
         return None
 
     def get_available_liquidity(self, market_id: str) -> float:
+        # Prefer actual liquidity from Gamma API market metadata
+        liquidity = self._market_dict.get("liquidity")
+        if liquidity is not None:
+            return float(liquidity)
+        # Fallback to volume (though volume != liquidity)
         return self._md.volume or 0.0
 
     def get_order_book_depth(self, market_id: str) -> Dict[str, float]:
         return {"bid": 0.0, "ask": 0.0}
 
     def get_volatility(self, market_id: str, period: str = "24h") -> float:
-        return abs(self._md.change_24h) if self._md.change_24h else 0.0
+        # 1. Prefer WebSocket change_24h if available
+        change = self._md.change_24h
+        if change:
+            return abs(change)
+
+        # 2. Fallback: infer activity from Gamma API 24h volume.
+        #    Polymarket Market Channel WebSocket does not provide change_24h,
+        #    but high volume24hr implies price movement / market activity.
+        vol24 = (
+            self._market_dict.get("volume24hr")
+            or self._market_dict.get("volume24hrClob")
+            or self._market_dict.get("volume")
+            or 0
+        )
+        try:
+            vol24 = float(vol24)
+        except (ValueError, TypeError):
+            vol24 = 0.0
+
+        # DEBUG: log when fallback is used
+        if vol24 == 0:
+            strategy_exec_logger.debug(
+                "[VOL_DEBUG] market_id=%s vol24=%s market_keys=%s",
+                market_id,
+                self._market_dict.get("volume24hr"),
+                [k for k in self._market_dict.keys() if "volume" in k.lower() or "liquid" in k.lower()],
+            )
+
+        if vol24 >= 5000:
+            return 0.08
+        elif vol24 >= 1000:
+            return 0.05
+        elif vol24 >= 100:
+            return 0.02
+
+        return 0.0
 
     def get_price_range(self, market_id: str, period: str = "24h") -> Tuple[float, float]:
         p = self._md.yes_price
@@ -124,6 +164,15 @@ class StrategyRunner:
 
         # Global proxy for all HTTP requests
         self._proxy_url = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
+        self._http_client = httpx.AsyncClient(
+            proxy=self._proxy_url,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            timeout=httpx.Timeout(15.0, connect=10.0),
+        )
+
+        # Market cache refresh tracking
+        self._last_cache_refresh: Optional[datetime] = None
+        self._market_cache_refresh_interval = 600  # 10 minutes
 
         # Factor strategy engine
         self._buy_strategy: Optional[BuyStrategy] = None
@@ -141,58 +190,338 @@ class StrategyRunner:
         # Market data cache (condition_id -> market dict)
         self._market_cache: Dict[str, dict] = {}
         self._market_cache_ttl: Optional[datetime] = None
-        self._market_cache_duration_seconds = 300  # 5 minutes
+        self._market_cache_duration_seconds = 300  # 5 minutes - reduces API pressure while staying fresh
 
         # Token ID -> Condition ID mapping (for quick lookup)
         self._token_to_condition: Dict[str, str] = {}
 
+        # Condition ID -> (yes_token_id, no_token_id) mapping
+        self._condition_to_tokens: Dict[str, Tuple[Optional[str], Optional[str]]] = {}
+
+        # File-based persistent cache
+        self._cache_dir = Path(__file__).parent.parent.parent / "data"
+        self._cache_file = self._cache_dir / "market_cache.json"
+        self._cache_ttl_hours = 24
+        self._markets_added_since_save = 0
+        self._auto_save_threshold = 100
+
+        # Load persistent cache at startup (if available and not expired)
+        self._load_market_cache()
+
         # Trigger checkers per strategy (persist cooldown state across iterations)
         self._trigger_checkers: Dict[UUID, TriggerChecker] = {}
 
-        # Market trigger handler references per strategy (for unregister on stop)
-        self._market_trigger_handlers: Dict[UUID, Callable] = {}
+        # Hot market handler references per strategy (for unregister on stop)
+        self._hot_market_handlers: Dict[UUID, Callable] = {}
+
+        # Provider cache to avoid repeated DB queries for AI analysis
+        self._provider_cache: Dict[UUID, Optional[dict]] = {}
+
+        # Concurrency control to avoid starving the event loop
+        self._eval_semaphore = asyncio.Semaphore(15)
+        self._ai_semaphore = asyncio.Semaphore(3)  # limit AI API concurrency
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="strategy_"
+        )
+
+        # Lightweight evaluation stats (reset on summary print)
+        self._eval_stats: Dict[str, int] = {
+            "total": 0,
+            "data_source_unhealthy": 0,
+            "no_market": 0,
+            "no_price": 0,
+            "signal_filter": 0,
+            "keyword_filter": 0,
+            "entry_condition": 0,
+            "factor_rejected": 0,
+            "ai_none": 0,
+            "signal": 0,
+            "order_failed": 0,
+            "order_ok": 0,
+        }
+        self._last_summary_at: float = 0.0
+
+    def _record_eval(self, reason: str) -> None:
+        """Increment evaluation outcome counter."""
+        self._eval_stats["total"] += 1
+        self._eval_stats[reason] = self._eval_stats.get(reason, 0) + 1
+
+    def _log_summary(self) -> None:
+        """Print a one-line summary of evaluation stats since last call."""
+        now = time.time()
+        if now - self._last_summary_at < 30:
+            return
+        self._last_summary_at = now
+        s = self._eval_stats
+        if s["total"] == 0:
+            strategy_exec_logger.info("[SUMMARY] no evaluations in last 30s")
+            return
+        parts = [
+            f"eval={s['total']}",
+            f"signal={s['signal']}",
+            f"ordered={s['order_ok']}",
+            f"no_market={s['no_market']}",
+            f"no_price={s['no_price']}",
+            f"filter={s['signal_filter']}",
+            f"entry={s['entry_condition']}",
+            f"factor={s['factor_rejected']}",
+            f"ai_none={s['ai_none']}",
+            f"unhealthy={s['data_source_unhealthy']}",
+        ]
+        strategy_exec_logger.info("[SUMMARY] %s", " | ".join(parts))
+        # Reset counters
+        for k in s:
+            s[k] = 0
 
     def _get_cached_markets(self) -> List[dict]:
-        """Return cached markets if not expired."""
-        if self._market_cache_ttl and datetime.utcnow() < self._market_cache_ttl:
-            return list(self._market_cache.values())
+        """Return cached markets if not expired (deduplicated by object identity)."""
+        if self._market_cache_ttl and datetime.now(timezone.utc) < self._market_cache_ttl:
+            # Deduplicate: same market dict may be cached under both hex and numeric keys
+            seen: set = set()
+            result: List[dict] = []
+            for m in self._market_cache.values():
+                mid = id(m)
+                if mid not in seen:
+                    seen.add(mid)
+                    result.append(m)
+            return result
         return []
 
-    def _cache_markets(self, markets: List[dict]) -> None:
-        """Cache markets and build token->condition mapping."""
-        self._market_cache.clear()
-        self._token_to_condition.clear()
+    def _cache_markets(self, markets: List[dict], incremental: bool = False) -> None:
+        """Cache markets and build token->condition mapping.
+
+        Args:
+            markets: list of market dicts from Gamma API
+            incremental: if True, merge into existing cache instead of clearing
+        """
+        if not incremental:
+            self._market_cache.clear()
+            self._token_to_condition.clear()
+            self._condition_to_tokens.clear()
 
         for m in markets:
-            cid = m.get("id") or m.get("conditionId") or m.get("condition_id", "")
-            if not cid:
+            hex_id = m.get("conditionId") or m.get("condition_id")
+            numeric_id = m.get("id")
+
+            if not hex_id and not numeric_id:
                 continue
-            self._market_cache[cid] = m
+
+            cache_key = hex_id or str(numeric_id)
+            is_new = cache_key not in self._market_cache
+            if incremental and cache_key in self._market_cache:
+                # Merge: preserve existing fields not present in new dict
+                # (prevents hot-market simplified dict from overwriting full Gamma API data)
+                existing = self._market_cache[cache_key]
+                merged = {**existing, **m}
+                self._market_cache[cache_key] = merged
+                if hex_id and numeric_id:
+                    self._market_cache[str(numeric_id)] = merged
+            else:
+                self._market_cache[cache_key] = m
+                if hex_id and numeric_id:
+                    self._market_cache[str(numeric_id)] = m
+
+            map_key = hex_id or str(numeric_id)
 
             # Build token -> condition mapping
             for token in m.get("tokens", []):
                 tid = token.get("token_id") or token.get("clobTokenId", "")
                 if tid:
-                    self._token_to_condition[tid] = cid
-            # Also check clob_token_ids dict
+                    self._token_to_condition[tid] = map_key
             clob_ids = m.get("clob_token_ids", {})
             if isinstance(clob_ids, dict):
                 for side, tid in clob_ids.items():
                     if tid:
-                        self._token_to_condition[tid] = cid
+                        self._token_to_condition[tid] = map_key
 
-        self._market_cache_ttl = datetime.utcnow() + timedelta(
+            # Build condition -> (yes, no) tokens mapping from clobTokenIds
+            raw_clob = m.get("clobTokenIds")
+            if raw_clob:
+                try:
+                    if isinstance(raw_clob, str):
+                        clob_list = json.loads(raw_clob)
+                    elif isinstance(raw_clob, list):
+                        clob_list = raw_clob
+                    else:
+                        clob_list = []
+                    if len(clob_list) >= 2:
+                        self._condition_to_tokens[map_key] = (clob_list[0], clob_list[1])
+                        # Also build reverse mapping token_id -> condition_id
+                        for tid in clob_list:
+                            if tid:
+                                self._token_to_condition[str(tid)] = map_key
+                except Exception:
+                    pass
+            elif m.get("tokens"):
+                yes_tid = None
+                no_tid = None
+                for token in m.get("tokens", []):
+                    outcome = (token.get("outcome") or "").lower()
+                    tid = token.get("token_id") or token.get("clobTokenId", "")
+                    if outcome in ("yes", "y"):
+                        yes_tid = tid
+                    elif outcome in ("no", "n"):
+                        no_tid = tid
+                if yes_tid or no_tid:
+                    self._condition_to_tokens[map_key] = (yes_tid, no_tid)
+
+            if is_new:
+                self._markets_added_since_save += 1
+
+        self._market_cache_ttl = datetime.now(timezone.utc) + timedelta(
             seconds=self._market_cache_duration_seconds
         )
-        logger.info("Markets cached: %d markets, %d token mappings", len(self._market_cache), len(self._token_to_condition))
+        unique_count = len({id(m) for m in self._market_cache.values()})
+        logger.info(
+            "Markets cached: %d unique markets (%d keys), %d token mappings, %d condition->token pairs",
+            unique_count, len(self._market_cache), len(self._token_to_condition),
+            len(self._condition_to_tokens),
+        )
+
+    def _save_market_cache(self) -> None:
+        """Persist market cache to disk (atomic write with backup)."""
+        try:
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_data = {
+                "version": "1.0",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "markets": list(self._market_cache.values()),
+                "condition_to_tokens": {
+                    k: list(v) for k, v in self._condition_to_tokens.items()
+                },
+                "token_to_condition": self._token_to_condition,
+            }
+            temp_file = self._cache_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f, ensure_ascii=False, indent=2)
+            if self._cache_file.exists():
+                backup = self._cache_file.with_suffix(".bak")
+                if backup.exists():
+                    backup.unlink()
+                self._cache_file.rename(backup)
+            temp_file.rename(self._cache_file)
+            logger.info("[CACHE] Saved %d markets to %s", len(self._market_cache), self._cache_file)
+            self._markets_added_since_save = 0
+        except Exception as e:
+            logger.warning("[CACHE] Failed to save market cache: %s", e)
+
+    def _load_market_cache(self) -> bool:
+        """Load market cache from disk (with backup recovery)."""
+        for file_path, label in [(self._cache_file, "main"), (self._cache_file.with_suffix(".bak"), "backup")]:
+            try:
+                if not file_path.exists():
+                    continue
+                with open(file_path, "r", encoding="utf-8") as f:
+                    cache_data = json.load(f)
+                if cache_data.get("version") != "1.0":
+                    continue
+                ts = cache_data.get("timestamp", "")
+                if ts:
+                    try:
+                        cached_at = datetime.fromisoformat(ts)
+                        age_hours = (datetime.now(timezone.utc) - cached_at).total_seconds() / 3600
+                        if age_hours > self._cache_ttl_hours:
+                            logger.info("[CACHE] %s cache expired (%.1fh old), skipping", label, age_hours)
+                            continue
+                    except Exception:
+                        pass
+                markets = cache_data.get("markets", [])
+                self._cache_markets(markets, incremental=False)
+                # Restore condition_to_tokens
+                ctt = cache_data.get("condition_to_tokens", {})
+                for k, v in ctt.items():
+                    if isinstance(v, list) and len(v) >= 2:
+                        self._condition_to_tokens[k] = (v[0], v[1])
+                # Restore token_to_condition
+                ttc = cache_data.get("token_to_condition", {})
+                self._token_to_condition.update(ttc)
+                logger.info("[CACHE] Loaded %d markets from %s cache", len(markets), label)
+                return True
+            except Exception as e:
+                logger.warning("[CACHE] Failed to load %s cache: %s", label, e)
+        return False
+
+    async def _refresh_market_cache(self, data_source: DataSource) -> None:
+        """批量获取活跃市场列表并增量更新 runner + data_source 缓存。
+
+        使用 incremental=True 合并到现有缓存，保留文件缓存和 WebSocket
+        活动中已积累的 token 映射，避免数据丢失。
+        """
+        try:
+            all_markets: List[dict] = []
+            offset = 0
+            page_limit = 1000
+            max_pages = 10  # safety cap: 10k markets
+            async with httpx.AsyncClient(proxy=self._proxy_url) as client:
+                for page in range(max_pages):
+                    resp = await client.get(
+                        "https://gamma-api.polymarket.com/markets",
+                        params={
+                            "active": "true",
+                            "closed": "false",
+                            "limit": page_limit,
+                            "offset": offset,
+                        },
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    page_markets = data if isinstance(data, list) else data.get("markets", [])
+                    if not page_markets:
+                        break
+                    all_markets.extend(page_markets)
+                    if len(page_markets) < page_limit:
+                        break
+                    offset += page_limit
+
+            markets = all_markets
+
+            # Merge token details from WebSocket activity feed for markets lacking them
+            activity_tokens: Dict[str, str] = {}
+            if hasattr(data_source, "get_condition_token_map"):
+                activity_tokens = data_source.get_condition_token_map()
+
+            for m in markets:
+                cid = m.get("conditionId") or m.get("condition_id") or m.get("id", "")
+                if not cid:
+                    continue
+                if not m.get("tokens"):
+                    # Prefer existing cache tokens, then activity feed
+                    existing = self._market_cache.get(cid, {})
+                    if existing.get("tokens"):
+                        m["tokens"] = existing["tokens"]
+                    elif cid in activity_tokens:
+                        m["tokens"] = [{"token_id": activity_tokens[cid], "outcome": "Yes"}]
+
+            # Incremental merge: preserves existing mappings and only adds/updates
+            self._cache_markets(markets, incremental=True)
+
+            # Push metadata into data_source so _get_hours_to_expiry works
+            if hasattr(data_source, "update_market_meta"):
+                for m in markets:
+                    tid = self._get_market_yes_token_id(m)
+                    if tid:
+                        data_source.update_market_meta(tid, m)
+
+            self._last_cache_refresh = datetime.now(timezone.utc)
+            logger.info("Market cache refreshed: %d markets (incremental)", len(markets))
+
+            # Auto-save if enough new markets accumulated
+            if self._markets_added_since_save >= self._auto_save_threshold:
+                self._save_market_cache()
+        except Exception as e:
+            logger.warning("Failed to refresh market cache: %s", e)
 
     def _get_market_yes_token_id(self, market: dict) -> Optional[str]:
-        """Extract YES token_id from Gamma market dict for CLOB price lookup.
+        """Extract YES/Up token_id from Gamma market dict for CLOB price lookup.
 
         Gamma API returns condition_id in 'id' field and CLOB token_ids in
         'tokens' or 'clob_token_ids'. We need the actual CLOB token_id for
         PriceMonitor subscription and lookup.
         """
+        if not market:
+            return None
+
         # Try clob_token_ids dict first
         clob_ids = market.get("clob_token_ids", {})
         if isinstance(clob_ids, dict):
@@ -200,13 +529,60 @@ class StrategyRunner:
                 if key.lower() in ("yes", "y") and tid:
                     return tid
 
-        # Fall back to tokens list
-        for token in market.get("tokens", []):
+        # Fall back to tokens list (supports Yes/Up and other primary outcomes)
+        tokens = market.get("tokens", [])
+        for token in tokens:
             outcome = token.get("outcome", "")
-            if outcome and outcome.lower() in ("yes", "y"):
+            if outcome and outcome.lower() in ("yes", "y", "up"):
                 tid = token.get("token_id") or token.get("clobTokenId", "")
                 if tid:
                     return tid
+
+        # Debug: log unmatched tokens
+        if tokens:
+            strategy_exec_logger.info("[TOKEN] no yes-match in tokens: %s", tokens)
+            # Fallback: for binary markets with exactly 2 tokens, first is usually Yes
+            if len(tokens) == 2:
+                tid = tokens[0].get("token_id") or tokens[0].get("clobTokenId", "")
+                if tid:
+                    strategy_exec_logger.info("[TOKEN] using first token as yes fallback: %s", tid)
+                    return tid
+            # If only one token, use it
+            if len(tokens) == 1:
+                tid = tokens[0].get("token_id") or tokens[0].get("clobTokenId", "")
+                if tid:
+                    return tid
+
+        return None
+
+    def _get_market_no_token_id(self, market: dict) -> Optional[str]:
+        """Extract NO/Down token_id from Gamma market dict (synchronous, no HTTP)."""
+        if not market:
+            return None
+
+        # Try clob_token_ids dict first
+        clob_ids = market.get("clob_token_ids", {})
+        if isinstance(clob_ids, dict):
+            for key, tid in clob_ids.items():
+                if key.lower() in ("no", "n", "down") and tid:
+                    return tid
+
+        # Fall back to tokens list
+        tokens = market.get("tokens", [])
+        for token in tokens:
+            outcome = token.get("outcome", "")
+            if outcome and outcome.lower() in ("no", "n", "down"):
+                tid = token.get("token_id") or token.get("clobTokenId", "")
+                if tid:
+                    return tid
+
+        # Fallback: for binary markets with exactly 2 tokens, pick the non-yes one
+        if len(tokens) == 2:
+            yes_tid = self._get_market_yes_token_id(market)
+            tid0 = tokens[0].get("token_id") or tokens[0].get("clobTokenId", "")
+            tid1 = tokens[1].get("token_id") or tokens[1].get("clobTokenId", "")
+            if yes_tid and tid0 and tid1:
+                return tid1 if yes_tid == tid0 else tid0
 
         return None
 
@@ -289,16 +665,14 @@ class StrategyRunner:
             logger.error("Strategy %s: DataSource creation failed: %s", strategy_id, e)
             raise
 
-        logger.info("Strategy %s: data source ready, starting loop task...", strategy_id)
-
-        # Register event-driven market trigger handler for dual-window confirmation
-        if hasattr(data_source, "register_market_trigger_handler"):
-            handler = lambda cid, td: asyncio.create_task(
-                self._on_market_trigger(strategy_id, cid, td)
+        # Register event-driven hot market handler (significant capital flow triggers evaluation)
+        if hasattr(data_source, "register_hot_market_handler"):
+            hot_handler = lambda cid, wd: asyncio.create_task(
+                self._on_hot_market(strategy_id, cid, wd)
             )
-            self._market_trigger_handlers[strategy_id] = handler
-            data_source.register_market_trigger_handler(handler)
-            logger.info("Strategy %s: registered dual-window market trigger handler", strategy_id)
+            self._hot_market_handlers[strategy_id] = hot_handler
+            data_source.register_hot_market_handler(hot_handler)
+            logger.info("Strategy %s: registered hot market handler", strategy_id)
 
         task = asyncio.create_task(self._run_strategy_loop(strategy_id, data_source))
         self._tasks[strategy_id] = task
@@ -311,36 +685,38 @@ class StrategyRunner:
             del self._tasks[strategy_id]
             self._trigger_checkers.pop(strategy_id, None)
 
-        # Unregister market trigger handler
-        handler = self._market_trigger_handlers.pop(strategy_id, None)
+        # Unregister hot market handler
+        handler = self._hot_market_handlers.pop(strategy_id, None)
         if handler:
             for source in await self._data_source_manager.get_all_sources():
-                if hasattr(source, "unregister_market_trigger_handler"):
-                    source.unregister_market_trigger_handler(handler)
-            logger.info("Strategy %s: unregistered market trigger handler", strategy_id)
+                if hasattr(source, "unregister_hot_market_handler"):
+                    source.unregister_hot_market_handler(handler)
+            logger.info("Strategy %s: unregistered hot market handler", strategy_id)
 
         logger.info("Strategy %s: stopped", strategy_id)
 
     async def _run_strategy_loop(self, strategy_id: UUID, data_source: DataSource) -> None:
         """Main strategy execution loop."""
         try:
+            # Load strategy once
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Strategy).where(Strategy.id == strategy_id)
                 )
                 strategy = result.scalar_one_or_none()
 
-                if not strategy:
-                    logger.warning("Strategy %s: not found in DB, exiting loop", strategy_id)
-                    return
+            if not strategy:
+                logger.warning("Strategy %s: not found in DB, exiting loop", strategy_id)
+                return
 
-                interval = strategy.run_interval_minutes * 60
-                iteration = 0
-                strategy_exec_logger.info("[START] Strategy %s (%s) loop started, interval=%ds, is_active=%s, is_paused=%s",
-                                          strategy_id, strategy.name, interval, strategy.is_active, strategy.is_paused)
+            interval = 60  # Fixed 60s loop: lightweight health check only
+            iteration = 0
+            strategy_exec_logger.info("[START] Strategy %s (%s) loop started, interval=%ds, is_active=%s, is_paused=%s",
+                                      strategy_id, strategy.name, interval, strategy.is_active, strategy.is_paused)
 
-                # --- Initial warm-up: subscribe positions + markets immediately on restart ---
-                try:
+            # Warm-up (with its own session)
+            try:
+                async with AsyncSessionLocal() as db:
                     onchain_positions = await self._sync_onchain_positions(db, strategy)
                     strategy_exec_logger.info("[WARMUP] on-chain positions: %d", len(onchain_positions))
                     onchain_token_ids = [p["token_id"] for p in onchain_positions if p.get("token_id")]
@@ -348,7 +724,7 @@ class StrategyRunner:
                         await data_source.subscribe(onchain_token_ids)
                         strategy_exec_logger.info("[WARMUP] subscribed %d on-chain tokens", len(onchain_token_ids))
 
-                    markets = await self._get_available_markets(strategy)
+                    markets = await self._get_available_markets(strategy, data_source)
                     strategy_exec_logger.info("[WARMUP] fetched %d markets", len(markets))
                     if markets:
                         warm_token_ids: List[str] = []
@@ -361,62 +737,90 @@ class StrategyRunner:
                         if warm_token_ids and hasattr(data_source, "subscribe"):
                             await data_source.subscribe(warm_token_ids)
                             strategy_exec_logger.info("[WARMUP] subscribed %d market tokens", len(warm_token_ids))
+            except Exception as e:
+                strategy_exec_logger.error("[WARMUP] failed: %s", e)
+
+            while True:
+                try:
+                    # Reload strategy state each iteration (outside long-lived session)
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(
+                            select(Strategy).where(Strategy.id == strategy_id)
+                        )
+                        strategy = result.scalar_one_or_none()
+                        if not strategy or not strategy.is_active:
+                            strategy_exec_logger.info("[EXIT] strategy %s inactive or deleted", strategy_id)
+                            break
                 except Exception as e:
-                    strategy_exec_logger.error("[WARMUP] failed: %s", e)
+                    strategy_exec_logger.error("[ITER] strategy reload failed: %s", e)
+                    await asyncio.sleep(5)
+                    continue
 
-                while strategy.is_active:
-                    iteration += 1
-                    strategy_exec_logger.info("[ITER] %d started for strategy %s", iteration, strategy_id)
+                iteration += 1
+                strategy_exec_logger.info("[ITER] %d started for strategy %s (event-driven, no polling scan)", iteration, strategy_id)
+
+                # Refresh market cache every 10 minutes
+                if (
+                    self._last_cache_refresh is None
+                    or (datetime.now(timezone.utc) - self._last_cache_refresh).total_seconds()
+                    > self._market_cache_refresh_interval
+                ):
+                    await self._refresh_market_cache(data_source)
+
+                if strategy.is_paused:
+                    strategy_exec_logger.info("[ITER] strategy %s paused, skip sync", strategy_id)
+                else:
                     try:
-                        # 1. Sync on-chain positions from proxy wallet
-                        onchain_positions = await self._sync_onchain_positions(db, strategy)
-                        strategy_exec_logger.info("[ITER] synced %d on-chain positions", len(onchain_positions))
+                        async with AsyncSessionLocal() as db:
+                            # 1. Sync on-chain positions from proxy wallet
+                            onchain_positions = await self._sync_onchain_positions(db, strategy)
+                            strategy_exec_logger.info("[ITER] synced %d on-chain positions", len(onchain_positions))
 
-                        # 2. Subscribe WebSocket for on-chain positions only
-                        if onchain_positions:
-                            onchain_token_ids = [p["token_id"] for p in onchain_positions if p.get("token_id")]
-                            if onchain_token_ids and hasattr(data_source, "subscribe"):
-                                try:
-                                    await data_source.subscribe(onchain_token_ids)
-                                except Exception as e:
-                                    strategy_exec_logger.warning("[ITER] subscribe failed: %s", e)
+                            # 2. Subscribe WebSocket for on-chain positions
+                            if onchain_positions:
+                                onchain_token_ids = [p["token_id"] for p in onchain_positions if p.get("token_id")]
+                                if onchain_token_ids and hasattr(data_source, "subscribe"):
+                                    try:
+                                        await data_source.subscribe(onchain_token_ids)
+                                    except Exception as e:
+                                        strategy_exec_logger.warning("[ITER] subscribe failed: %s", e)
 
-                        # 3. Monitor existing positions (stop-loss / take-profit / flow-assisted exit)
-                        await self._monitor_positions(db, strategy, data_source, onchain_positions)
+                            # 3. Position monitoring is handled by position_monitor independently
+                            #    Strategy signal discovery is now event-driven via hot market callbacks.
 
-                        # 4. Execute strategy to find new opportunities
-                        signal_log = await self._execute_strategy(db, strategy, data_source)
-                        if signal_log is None:
-                            strategy_exec_logger.info("[ITER] %d ended, no signal", iteration)
-                        else:
-                            strategy_exec_logger.info("[ITER] %d ended, signal=%s status=%s", iteration, signal_log.signal_type, signal_log.status)
-
-                        strategy.last_run_at = datetime.utcnow()
-                        strategy.total_runs += 1
-                        await db.commit()
+                            strategy.last_run_at = datetime.utcnow()
+                            strategy.total_runs += 1
+                            await db.commit()
                     except Exception as e:
                         strategy_exec_logger.error("[ITER] %d error: %s\n%s", iteration, e, traceback.format_exc())
 
-                    strategy_exec_logger.info("[SLEEP] sleeping %ds", interval)
-                    for handler in strategy_exec_logger.handlers:
-                        handler.flush()
-                    await asyncio.sleep(interval)
-                    await db.refresh(strategy)
-                    strategy_exec_logger.info("[WAKE] iteration %d resuming", iteration + 1)
+                self._log_summary()
+                strategy_exec_logger.info("[SLEEP] sleeping %ds (position sync only)", interval)
+                for handler in strategy_exec_logger.handlers:
+                    handler.flush()
+                await asyncio.sleep(interval)
+                strategy_exec_logger.info("[WAKE] iteration %d resuming", iteration + 1)
         finally:
             self._tasks.pop(strategy_id, None)
             strategy_exec_logger.info("[EXIT] Strategy %s loop exited", strategy_id)
 
-    async def _on_market_trigger(
-        self, strategy_id: UUID, condition_id: str, trigger_data: Dict[str, Any]
+    async def _on_hot_market(
+        self, strategy_id: UUID, condition_id: str, window_data: Dict[str, Any]
     ) -> None:
-        """Handle dual-window market trigger for a specific strategy (event-driven path)."""
+        """Handle significant capital flow event for a specific strategy (event-driven)."""
+        event_time = window_data.get("event_time")
+        if event_time:
+            age = time.time() - event_time
+            if age > 60:
+                strategy_exec_logger.info("[HOT] event too old (%.1fs), drop %s", age, condition_id)
+                return
+
         strategy_exec_logger.info(
-            "[EVENT] strategy=%s market=%s short_netflow=%.2f long_netflow=%.2f",
+            "[HOT] strategy=%s market=%s netflow=%.2f traders=%d",
             strategy_id,
             condition_id,
-            trigger_data.get("short_window", {}).get("net_flow", 0),
-            trigger_data.get("long_window", {}).get("net_flow", 0),
+            window_data.get("net_flow", 0),
+            window_data.get("trader_count", 0),
         )
         for handler in strategy_exec_logger.handlers:
             handler.flush()
@@ -424,7 +828,18 @@ class StrategyRunner:
         # Skip if strategy loop is not running
         task = self._tasks.get(strategy_id)
         if not task or task.done() or task.cancelled():
-            strategy_exec_logger.info("[EVENT] strategy %s not running, skip", strategy_id)
+            strategy_exec_logger.info("[HOT] strategy %s not running, skip", strategy_id)
+            return
+
+        # Non-blocking acquire: drop event if semaphore is saturated
+        acquired = False
+        try:
+            acquired = await asyncio.wait_for(self._eval_semaphore.acquire(), timeout=5.0)
+        except asyncio.TimeoutError:
+            strategy_exec_logger.info("[HOT] eval saturated, drop %s", condition_id)
+            return
+
+        if not acquired:
             return
 
         try:
@@ -434,18 +849,34 @@ class StrategyRunner:
                 )
                 strategy = result.scalar_one_or_none()
                 if not strategy or not strategy.is_active:
-                    strategy_exec_logger.info("[EVENT] strategy %s inactive, skip", strategy_id)
+                    strategy_exec_logger.info("[HOT] strategy %s inactive, skip", strategy_id)
+                    return
+                if strategy.is_paused:
+                    strategy_exec_logger.info("[HOT] strategy %s paused, skip", strategy_id)
                     return
 
                 data_source = await self._data_source_manager.get_or_create_source(
                     portfolio_id=strategy.portfolio_id,
                     source_type="polymarket",
                 )
+                if not data_source.is_healthy():
+                    self._record_eval("data_source_unhealthy")
+                    strategy_exec_logger.info("[HOT] unhealthy skip %s", condition_id)
+                    return
+
+                net_flow = window_data.get("net_flow", 0)
+                side = "yes" if net_flow >= 0 else "no"
+                trigger_data = {
+                    "short_window": {**window_data, "avg_price": 0},
+                    "long_window": window_data,
+                }
                 await self._evaluate_single_market(
-                    db, strategy, data_source, condition_id, trigger_data
+                    db, strategy, data_source, condition_id, trigger_data, side=side
                 )
         except Exception as e:
-            strategy_exec_logger.error("[EVENT] error handling market trigger: %s\n%s", e, traceback.format_exc())
+            strategy_exec_logger.error("[HOT] error: %s\n%s", e, traceback.format_exc())
+        finally:
+            self._eval_semaphore.release()
 
     async def _evaluate_single_market(
         self,
@@ -454,46 +885,168 @@ class StrategyRunner:
         data_source: DataSource,
         condition_id: str,
         trigger_data: Dict[str, Any],
+        side: str = "yes",
     ) -> Optional[SignalLog]:
         """Evaluate a single market triggered by dual-window event (event-driven fast path).
 
-        Skips Tier 1 pre-filter and trigger checks because the dual-window
-        confirmation already guarantees meaningful activity.
+        Args:
+            side: "yes" or "no" — determined by caller based on netflow direction.
         """
-        strategy_exec_logger.info("[EVAL] evaluating market %s for strategy %s", condition_id, strategy.id)
+        strategy_exec_logger.info("[EVAL] evaluating market %s side=%s for strategy %s", condition_id, side, strategy.id)
         for handler in strategy_exec_logger.handlers:
             handler.flush()
+        _eval_start = time.time()
 
         # 1. Cooldown check
         trigger_checker = self._trigger_checkers.get(strategy.id)
         if trigger_checker and not trigger_checker.check_cooldown():
             strategy_exec_logger.info("[EVAL] cooldown active, skip %s", condition_id)
             return None
+        t1 = time.time()
 
-        # 2. Get market metadata
+        # 2. Get market metadata and token for the chosen side
         market = self._market_cache.get(condition_id)
-        token_id = self._get_market_yes_token_id(market) if market else None
+        if side == "yes":
+            token_id = self._get_market_yes_token_id(market) if market else None
+        else:
+            token_id = self._get_market_no_token_id(market) if market else None
 
+        # 2b. Cache miss: try to recover from WebSocket feed mappings first
+        if not market or not token_id:
+            ws_yes_tid = None
+            ws_no_tid = None
+            ws_meta = None
+            if hasattr(data_source, "get_condition_tokens"):
+                ws_yes_tid, ws_no_tid = data_source.get_condition_tokens(condition_id)
+            if hasattr(data_source, "get_condition_meta"):
+                ws_meta = data_source.get_condition_meta(condition_id)
+
+            # Fallback to runner's own mapping
+            if not ws_yes_tid and not ws_no_tid:
+                pair = self._condition_to_tokens.get(condition_id)
+                if pair:
+                    ws_yes_tid, ws_no_tid = pair
+
+            if ws_yes_tid or ws_no_tid:
+                tokens = []
+                if ws_yes_tid:
+                    tokens.append({"token_id": ws_yes_tid, "outcome": "Yes"})
+                if ws_no_tid:
+                    tokens.append({"token_id": ws_no_tid, "outcome": "No"})
+                # Try to get real metadata from cache first
+                cached_market = self._market_cache.get(condition_id)
+                market = {
+                    "conditionId": condition_id,
+                    "condition_id": condition_id,
+                    "id": condition_id,
+                    "tokens": tokens,
+                    "question": (ws_meta.get("question") if ws_meta else None) or (cached_market.get("question") if cached_market else None) or "Unknown",
+                    "slug": (ws_meta.get("slug") if ws_meta else None) or (cached_market.get("slug") if cached_market else None) or "",
+                    "liquidity": float(cached_market.get("liquidity", 0)) if cached_market else 5000.0,
+                    "volume": float(cached_market.get("volume", 0)) if cached_market else 1000.0,
+                    "endDate": cached_market.get("endDate") if cached_market else None,
+                }
+                if side == "yes":
+                    token_id = ws_yes_tid
+                else:
+                    token_id = ws_no_tid
+                strategy_exec_logger.info("[EVAL] recovered market %s from WebSocket feed tokens=%s", condition_id, tokens)
+
+        # 2c. Last resort: broken Gamma API fallback (kept for rare cases, usually fails for hex ids)
         if not market or not token_id:
             try:
-                async with httpx.AsyncClient(proxy=self._proxy_url) as client:
+                client = self._http_client
+                search_resp = await client.get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={"conditionIds": condition_id, "limit": 1},
+                )
+                if search_resp.status_code == 200:
+                    data = search_resp.json()
+                    markets = data if isinstance(data, list) else data.get("markets", [])
+                    market = markets[0] if markets else None
+
+                if not market:
                     resp = await client.get(
                         f"https://gamma-api.polymarket.com/markets/{condition_id}",
-                        timeout=10,
                     )
                     if resp.status_code == 200:
                         market = resp.json()
-                        self._market_cache[condition_id] = market
+
+                if market:
+                    hex_cid = market.get("conditionId") or market.get("condition_id") or condition_id
+                    numeric_id = market.get("id")
+                    self._market_cache[hex_cid] = market
+                    if numeric_id:
+                        self._market_cache[str(numeric_id)] = market
+
+                    if not market.get("tokens") and numeric_id:
+                        tokens = await self._fetch_gamma_token_details(str(numeric_id))
+                        if tokens:
+                            market["tokens"] = tokens
+
+                    if hasattr(data_source, "update_market_meta"):
+                        yes_tid = self._get_market_yes_token_id(market)
+                        if yes_tid:
+                            data_source.update_market_meta(yes_tid, market)
+                    if side == "yes":
                         token_id = self._get_market_yes_token_id(market)
-                        if token_id:
-                            self._token_to_condition[token_id] = condition_id
+                    else:
+                        token_id = self._get_market_no_token_id(market)
+                    if token_id:
+                        self._token_to_condition[token_id] = hex_cid
             except Exception as e:
-                strategy_exec_logger.warning("[EVAL] failed to fetch market %s: %s", condition_id, e)
-                return None
+                strategy_exec_logger.warning("[EVAL] fetch market %s failed: %s", condition_id, repr(e))
 
         if not market or not token_id:
-            strategy_exec_logger.warning("[EVAL] no market data for %s", condition_id)
+            self._record_eval("no_market")
+            strategy_exec_logger.info("[EVAL] no market %s side=%s strategy=%s", condition_id, side, strategy.id)
             return None
+        t2 = time.time()
+
+        # 3. Get real-time price (price monitor caches YES token)
+        yes_token_id = self._get_market_yes_token_id(market)
+        no_token_id = self._get_market_no_token_id(market)
+        market_data = None
+        if yes_token_id:
+            market_data = await data_source.get_market_data(yes_token_id)
+        if not market_data and no_token_id:
+            md_no = await data_source.get_market_data(no_token_id)
+            if md_no:
+                # Invert prices since we looked up the NO token
+                market_data = MarketData(
+                    market_id=no_token_id,
+                    token_id=no_token_id,
+                    yes_price=1 - md_no.yes_price,
+                    no_price=md_no.yes_price,
+                    change_24h=md_no.change_24h,
+                    volume=md_no.volume,
+                    hours_to_expiry=md_no.hours_to_expiry,
+                    timestamp=md_no.timestamp,
+                    best_bid=1 - md_no.best_ask if md_no.best_ask is not None else None,
+                    best_ask=1 - md_no.best_bid if md_no.best_bid is not None else None,
+                    spread=md_no.spread,
+                )
+        if not market_data:
+            self._record_eval("no_price")
+            strategy_exec_logger.info("[EVAL] no price %s yes=%s no=%s", condition_id, yes_token_id, no_token_id)
+            return None
+
+        eval_price = market_data.yes_price if side == "yes" else market_data.no_price
+
+        # Build direction-aware MarketData for entry condition / factor evaluation
+        filter_md = MarketData(
+            market_id=market_data.market_id,
+            token_id=token_id,
+            yes_price=eval_price,
+            no_price=1 - eval_price,
+            change_24h=market_data.change_24h,
+            volume=market_data.volume,
+            hours_to_expiry=market_data.hours_to_expiry,
+            timestamp=market_data.timestamp,
+            best_bid=market_data.best_bid if side == "yes" else (1 - market_data.best_ask if market_data.best_ask is not None else None),
+            best_ask=market_data.best_ask if side == "yes" else (1 - market_data.best_bid if market_data.best_bid is not None else None),
+            spread=market_data.spread,
+        )
 
         # Push metadata and subscribe token
         if hasattr(data_source, "update_market_meta"):
@@ -504,43 +1057,63 @@ class StrategyRunner:
             except Exception:
                 pass
 
-        # 3. Get real-time price
-        market_data = await data_source.get_market_data(token_id)
-        if not market_data:
-            strategy_exec_logger.info("[EVAL] no market data for token %s", token_id)
-            return None
-
         # 4. SignalFilter (Tier 2: price range, dead zone, expiry)
+        # SignalFilter checks the market's base probability (yes_price), NOT the
+        # side-specific price.  When side=no the no_price is 1-yes_price; we must
+        # still filter on the underlying market level.
         filter_config = {}
         if strategy.filters and isinstance(strategy.filters, dict):
             filter_config = strategy.filters
         else:
             filter_config = {
                 "min_confidence": 40,
-                "min_price": 0.5,
+                "min_price": 0.05,
                 "max_price": 0.99,
-                "max_hours_to_expiry": 6,
             }
         signal_filter = SignalFilter(filter_config)
 
-        if not signal_filter.filter_market(market_data):
-            strategy_exec_logger.info("[EVAL] signal filter rejected %s", condition_id)
+        filter_check_md = MarketData(
+            market_id=market_data.market_id,
+            token_id=token_id,
+            yes_price=market_data.yes_price,
+            no_price=market_data.no_price,
+            change_24h=market_data.change_24h,
+            volume=market_data.volume,
+            hours_to_expiry=market_data.hours_to_expiry,
+            timestamp=market_data.timestamp,
+            best_bid=market_data.best_bid,
+            best_ask=market_data.best_ask,
+            spread=market_data.spread,
+        )
+
+        if not signal_filter.filter_market(filter_check_md):
+            self._record_eval("signal_filter")
+            strategy_exec_logger.info(
+                "[EVAL] filter rejected %s yes_price=%.4f eval_price=%.4f side=%s range=[%.2f,%.2f] dead_zone=[%.2f,%.2f] strategy=%s",
+                condition_id, market_data.yes_price, eval_price, side,
+                signal_filter.min_price, signal_filter.max_price,
+                signal_filter.dead_zone_min, signal_filter.dead_zone_max,
+                strategy.id,
+            )
             return None
+        t3 = time.time()
 
         # 5. Keyword filter (Tier 3)
         market_name = market.get("question", market.get("symbol", ""))
         if not signal_filter.filter_by_keywords(market_name):
-            strategy_exec_logger.info("[EVAL] keyword filter rejected %s", condition_id)
+            self._record_eval("keyword_filter")
+            strategy_exec_logger.info("[EVAL] keyword rejected %s", condition_id)
             return None
 
         # 6. Entry condition validation (Tier 4)
-        adapter = _EntryConditionAdapter(market_data)
+        adapter = _EntryConditionAdapter(filter_md, market)
         entry_cond_config = EntryConditionConfig(
-            price_min=0.05,
-            price_max=0.95,
+            price_min=signal_filter.min_price,
+            price_max=signal_filter.max_price,
             allow_death_zone=True,
-            min_liquidity=1000.0,
-            min_order_book_depth=500.0,
+            min_liquidity=0.0,
+            min_order_book_depth=0.0,
+            min_volatility=0.0,
         )
         entry_cond_validator = EntryConditionValidator(
             market_source=adapter,
@@ -548,40 +1121,59 @@ class StrategyRunner:
             volatility_source=adapter,
             config=entry_cond_config,
         )
-        cond_result = entry_cond_validator.validate(
-            market_id=market_data.market_id or token_id,
-            current_price=market_data.yes_price,
+        loop = asyncio.get_event_loop()
+        cond_result = await loop.run_in_executor(
+            self._executor,
+            entry_cond_validator.validate,
+            market_data.market_id or token_id,
+            eval_price,
         )
         if not cond_result.can_enter:
+            self._record_eval("entry_condition")
             reason = cond_result.failed_checks[0].message if cond_result.failed_checks else str(cond_result.overall_result)
-            strategy_exec_logger.info("[EVAL] entry condition rejected %s: %s", condition_id, reason)
+            strategy_exec_logger.info("[EVAL] entry rejected %s: %s", condition_id, reason)
+            return None
+        t4 = time.time()
+
+        # 7. ExpiryPolicy - unified time gate
+        expiry_policy = ExpiryPolicy.from_strategy_config(filter_config)
+        expiry_verdict = expiry_policy.check(market_data.hours_to_expiry)
+        if expiry_verdict.action == ExpiryAction.BLOCK:
+            self._record_eval("entry_condition")
+            strategy_exec_logger.info("[EVAL] expiry rejected %s", condition_id)
             return None
 
-        # 7. Activity data for factor evaluation
-        activity_data = await data_source.get_activity(token_id)
+        # 8. Activity data for factor evaluation
+        activity_data = await data_source.get_activity(yes_token_id)
 
-        # 8. Factor evaluation (Tier 6)
+        # 9. Factor evaluation (Tier 6)
         buy_config = self._get_buy_strategy_config(strategy)
         buy_strategy = BuyStrategy(
             signal_generators=[],
             risk_manager=None,
             config=buy_config,
         )
-        context = self._build_market_context(market, market_data, activity_data, data_source, token_id)
+        context = self._build_market_context(market, filter_md, activity_data, data_source, token_id)
         factor_output = await buy_strategy.evaluate(context)
 
         if factor_output.decision in (BuyDecision.PASS, BuyDecision.BLOCKED):
+            self._record_eval("factor_rejected")
             strategy_exec_logger.info(
-                "[EVAL] factor rejected %s: decision=%s", condition_id, factor_output.decision.value
+                "[EVAL] factor rejected %s scores=%s reasoning=%s",
+                condition_id,
+                factor_output.signal_scores,
+                factor_output.reasoning,
             )
             return None
+        t5 = time.time()
 
         # 9. AI analysis (Tier 7) — single market, no need for top-N
         market["_triggered"] = True
-        short_avg = trigger_data.get("short_window", {}).get("avg_price", market_data.yes_price)
+        market["_side"] = side
+        short_avg = trigger_data.get("short_window", {}).get("avg_price", eval_price)
         market["_price_change"] = (
-            abs(short_avg - market_data.yes_price) / market_data.yes_price * 100
-            if market_data.yes_price > 0 else 0
+            abs(short_avg - eval_price) / eval_price * 100
+            if eval_price > 0 else 0
         )
         market["_netflow"] = trigger_data.get("short_window", {}).get("net_flow", 0)
         market["_factor_score"] = (
@@ -593,20 +1185,21 @@ class StrategyRunner:
         market["_factor_stop_loss"] = factor_output.stop_loss
         market["_factor_take_profit"] = factor_output.take_profit
         market["_factor_reasoning"] = factor_output.reasoning
-        market["_current_price"] = market_data.yes_price
+        market["_current_price"] = eval_price
 
         ai_result = await self._call_ai_analysis(strategy, [market], [(token_id, factor_output)])
+        t6 = time.time()
         if not ai_result:
-            strategy_exec_logger.info("[EVAL] AI returned None for %s", condition_id)
+            self._record_eval("ai_none")
+            strategy_exec_logger.info("[EVAL] AI none %s", condition_id)
             return None
 
         # 10. AI confidence filter
         confidence = ai_result.get("confidence", 0)
         min_confidence = signal_filter.min_confidence / 100
         if confidence < min_confidence:
-            strategy_exec_logger.info(
-                "[EVAL] AI confidence %.2f < min %.2f for %s", confidence, min_confidence, condition_id
-            )
+            self._record_eval("factor_rejected")
+            strategy_exec_logger.info("[EVAL] AI confidence %.2f < %.2f %s", confidence, min_confidence, condition_id)
             return None
 
         # 11. Update trigger time
@@ -619,14 +1212,14 @@ class StrategyRunner:
         symbol = ai_result.get("symbol", market.get("symbol", ""))
 
         signal_log = SignalLog(
-            id=UUID(),
+            id=uuid4(),
             user_id=strategy.user_id,
             portfolio_id=strategy.portfolio_id,
             strategy_id=strategy.id,
-            signal_id=str(UUID()),
+            signal_id=str(uuid4()),
             signal_type=ai_result.get("action", "hold"),
             confidence=Decimal(str(ai_result.get("confidence", 0))),
-            side=ai_result.get("side", "yes"),
+            side=side,
             size=Decimal(str(order_size)),
             stop_loss_price=Decimal(str(ai_result.get("stop_loss", 0))) if ai_result.get("stop_loss") else None,
             take_profit_price=Decimal(str(ai_result.get("take_profit", 0))) if ai_result.get("take_profit") else None,
@@ -641,13 +1234,14 @@ class StrategyRunner:
             decision_details=ai_result.get("decision_details"),
             market_id=market_id,
             symbol=symbol,
+            signal_generated_at=datetime.utcnow(),
         )
         db.add(signal_log)
         await db.commit()
+        self._record_eval("signal")
 
         # 13. Position limits and execution
         action = ai_result.get("action")
-        side = ai_result.get("side", "yes")
 
         if action in ["buy", "sell"]:
             from sqlalchemy import func as sa_func
@@ -683,8 +1277,15 @@ class StrategyRunner:
 
             await self._execute_order(db, strategy, signal_log)
 
+        total_time = time.time() - _eval_start
         strategy_exec_logger.info(
-            "[EVAL] done for %s signal_type=%s status=%s", condition_id, signal_log.signal_type, signal_log.status
+            "[SIGNAL] %s side=%s price=%.4f conf=%.2f status=%s total=%.2fs", condition_id, side, eval_price, confidence, signal_log.status, total_time
+        )
+        strategy_exec_logger.info(
+            "[TIMING] %s fetch=%.2fs filter=%.2fs entry=%.2fs factor=%.2fs ai=%.2fs total=%.2fs",
+            condition_id, t2-t1 if 't2' in locals() else 0, t3-t2 if 't3' in locals() else 0,
+            t4-t3 if 't4' in locals() else 0, t5-t4 if 't5' in locals() else 0,
+            t6-t5 if 't6' in locals() else 0, total_time,
         )
         for handler in strategy_exec_logger.handlers:
             handler.flush()
@@ -697,7 +1298,7 @@ class StrategyRunner:
         strategy_exec_logger.info("[EXEC] _execute_strategy started for %s", strategy.id)
 
         # 1. Get available markets
-        markets = await self._get_available_markets(strategy)
+        markets = await self._get_available_markets(strategy, data_source)
         if not markets:
             return None
 
@@ -710,10 +1311,12 @@ class StrategyRunner:
                 'min_confidence': 40,
                 'min_price': 0.5,
                 'max_price': 0.99,
-                'max_hours_to_expiry': 6,
             }
 
         signal_filter = SignalFilter(filter_config)
+
+        # Initialize ExpiryPolicy from strategy config
+        expiry_policy = ExpiryPolicy.from_strategy_config(filter_config)
 
         trigger_config = {}
         if strategy.trigger and isinstance(strategy.trigger, dict):
@@ -768,34 +1371,65 @@ class StrategyRunner:
         # 6. Filter markets + check triggers + factor evaluation
         triggered_markets: List[dict] = []
         factor_results: List[Tuple[str, BuyDecisionOutput]] = []
-        stats = {"prefilter": 0, "no_price": 0, "signal_filter": 0, "keyword": 0, "entry_cond": 0, "no_trigger": 0, "factor_reject": 0, "passed": 0}
+        stats = {"missing_token_id": 0, "prefilter": 0, "no_price": 0, "signal_filter": 0, "keyword": 0, "entry_cond": 0, "no_trigger": 0, "factor_reject": 0, "passed": 0}
 
         for market in markets:
             condition_id = market.get("id") or market.get("conditionId") or market.get("condition_id", "")
-            token_id = market_token_map.get(condition_id)
-            if not token_id:
+            yes_token_id = market_token_map.get(condition_id)
+            if not yes_token_id:
+                stats["missing_token_id"] += 1
                 continue
 
             # === Tier 1: Activity flow pre-filter (PRIMARY GATE, 60s window) ===
-            activity_data = await data_source.get_activity(token_id)
+            activity_data = await data_source.get_activity(yes_token_id)
             if activity_data is not None:
-                # 60秒窗口：无活跃交易员且净流入不足时跳过
-                if activity_data.unique_traders < 2 and abs(activity_data.netflow) < 50:
+                if abs(activity_data.netflow) < 50:
                     logger.debug(
-                        "Activity pre-filter rejected %s (60s): traders=%d netflow=%.2f",
-                        token_id, activity_data.unique_traders, activity_data.netflow,
+                        "Activity pre-filter rejected %s (60s): netflow=%.2f traders=%d",
+                        yes_token_id, activity_data.netflow, activity_data.unique_traders,
                     )
                     stats["prefilter"] += 1
                     continue
 
-            # Get real-time price data
-            market_data = await data_source.get_market_data(token_id)
+            # Determine side from netflow direction
+            netflow = activity_data.netflow if activity_data else 0
+            side = "yes" if netflow >= 0 else "no"
+
+            # Get token for chosen side
+            if side == "yes":
+                token_id = yes_token_id
+            else:
+                token_id = await self._get_token_id(condition_id, "no")
+                if not token_id:
+                    stats["missing_token_id"] += 1
+                    continue
+
+            # Get real-time price data (price monitor caches YES token)
+            market_data = await data_source.get_market_data(yes_token_id)
             if not market_data:
                 stats["no_price"] += 1
                 continue
 
+            eval_price = market_data.yes_price if side == "yes" else market_data.no_price
+
+            # Build direction-aware MarketData for filtering / validation
+            filter_md = MarketData(
+                market_id=market_data.market_id,
+                token_id=token_id,
+                yes_price=eval_price,
+                no_price=1 - eval_price,
+                change_24h=market_data.change_24h,
+                volume=market_data.volume,
+                hours_to_expiry=market_data.hours_to_expiry,
+                timestamp=market_data.timestamp,
+                best_bid=market_data.best_bid if side == "yes" else (1 - market_data.best_ask if market_data.best_ask is not None else None),
+                best_ask=market_data.best_ask if side == "yes" else (1 - market_data.best_bid if market_data.best_bid is not None else None),
+                spread=market_data.spread,
+            )
+
             # Apply SignalFilter (price range, dead zone, expiry)
-            if not signal_filter.filter_market(market_data):
+            if not signal_filter.filter_market(filter_md):
+                strategy_exec_logger.info("[EXEC] signal filter rejected %s side=%s price=%.4f", condition_id, side, eval_price)
                 stats["signal_filter"] += 1
                 continue
 
@@ -806,15 +1440,14 @@ class StrategyRunner:
                 continue
 
             # === Layer 2: Entry Condition Validation ===
-            new_price = market_data.yes_price
-
-            adapter = _EntryConditionAdapter(market_data)
+            adapter = _EntryConditionAdapter(filter_md, market)
             entry_cond_config = EntryConditionConfig(
                 price_min=0.05,
                 price_max=0.95,
                 allow_death_zone=True,
                 min_liquidity=1000.0,
                 min_order_book_depth=500.0,
+                min_volatility=0.0,
             )
             entry_cond_validator = EntryConditionValidator(
                 market_source=adapter,
@@ -822,37 +1455,41 @@ class StrategyRunner:
                 volatility_source=adapter,
                 config=entry_cond_config,
             )
-            cond_result = entry_cond_validator.validate(
-                market_id=market_data.market_id or token_id,
-                current_price=new_price,
+            loop = asyncio.get_event_loop()
+            cond_result = await loop.run_in_executor(
+                self._executor,
+                entry_cond_validator.validate,
+                market_data.market_id or token_id,
+                eval_price,
             )
             if not cond_result.can_enter:
                 failed = cond_result.failed_checks
                 reason = failed[0].message if failed else str(cond_result.overall_result)
-                logger.info("EntryConditionValidator rejected %s: %s", market_data.market_id, reason)
+                strategy_exec_logger.info("[EXEC] entry condition rejected %s side=%s: %s", condition_id, side, reason)
+                stats["entry_cond"] += 1
+                continue
+
+            # ExpiryPolicy - unified time gate
+            expiry_verdict = expiry_policy.check(market_data.hours_to_expiry)
+            if expiry_verdict.action == ExpiryAction.BLOCK:
+                logger.info("ExpiryPolicy rejected %s: %s", market_data.market_id, expiry_verdict.reason)
                 stats["entry_cond"] += 1
                 continue
 
             # Trigger check (price change + netflow)
-            # old_price from Gamma API market dict usually has no "price" field
             raw_old_price = market.get("price")
-            new_price = market_data.yes_price
+            new_price = eval_price
 
             if raw_old_price is not None:
                 price_triggered = trigger_checker.check_price_trigger(float(raw_old_price), new_price)
             else:
-                # First-time scan: no historical price, skip price trigger requirement
                 price_triggered = True
                 logger.debug("Price trigger skipped for %s (first scan)", token_id)
 
-            netflow = activity_data.netflow if activity_data else 0
             activity_triggered = trigger_checker.check_activity_trigger(netflow, new_price)
-
-            # Default AND logic: both price and activity must confirm
-            # If no activity data available, skip activity trigger requirement
             should_trigger = price_triggered and (activity_triggered if activity_data is not None else True)
 
-            # Sports event override: strong game events can bypass the AND gate
+            # Sports event override
             sports_triggered = False
             if hasattr(data_source, "get_sports_signal"):
                 sports_signal = data_source.get_sports_signal(token_id)
@@ -874,9 +1511,13 @@ class StrategyRunner:
             stats["passed"] += 1
 
             # === Factor Evaluation ===
-            # Build MarketContext and run BuyStrategy.evaluate()
-            context = self._build_market_context(market, market_data, activity_data, data_source, token_id)
-            factor_output = await self._buy_strategy.evaluate(context)
+            context = self._build_market_context(market, filter_md, activity_data, data_source, token_id)
+            loop = asyncio.get_event_loop()
+            factor_output = await loop.run_in_executor(
+                self._executor,
+                self._buy_strategy.evaluate,
+                context,
+            )
 
             # Filter by factor score: PASS or BLOCKED skip
             if factor_output.decision in (BuyDecision.PASS, BuyDecision.BLOCKED):
@@ -888,6 +1529,8 @@ class StrategyRunner:
 
             # Enrich market with trigger and factor info for AI
             market["_triggered"] = True
+            market["_side"] = side
+            market["_token_id"] = token_id
             raw_old_price = market.get("price")
             old_price = float(raw_old_price) if raw_old_price is not None else new_price
             market["_price_change"] = abs(new_price - old_price) / old_price * 100 if old_price > 0 else 0
@@ -903,8 +1546,8 @@ class StrategyRunner:
             triggered_markets.append(market)
 
         strategy_exec_logger.info(
-            "[FILTER] total=%d prefilter=%d no_price=%d signal_filter=%d keyword=%d entry_cond=%d no_trigger=%d factor_reject=%d passed=%d",
-            len(markets), stats["prefilter"], stats["no_price"], stats["signal_filter"], stats["keyword"], stats["entry_cond"], stats["no_trigger"], stats["factor_reject"], stats["passed"],
+            "[FILTER] total=%d missing_token_id=%d prefilter=%d no_price=%d signal_filter=%d keyword=%d entry_cond=%d no_trigger=%d factor_reject=%d passed=%d",
+            len(markets), stats["missing_token_id"], stats["prefilter"], stats["no_price"], stats["signal_filter"], stats["keyword"], stats["entry_cond"], stats["no_trigger"], stats["factor_reject"], stats["passed"],
         )
         for handler in strategy_exec_logger.handlers:
             handler.flush()
@@ -965,16 +1608,17 @@ class StrategyRunner:
         # 11. Create SignalLog
         market_id = ai_result.get("market_id", "")
         symbol = ai_result.get("symbol", "")
+        side = selected_market.get("_side", "yes") if selected_market else "yes"
 
         signal_log = SignalLog(
-            id=UUID(),
+            id=uuid4(),
             user_id=strategy.user_id,
             portfolio_id=strategy.portfolio_id,
             strategy_id=strategy.id,
-            signal_id=str(UUID()),
+            signal_id=str(uuid4()),
             signal_type=ai_result.get("action", "hold"),
             confidence=Decimal(str(ai_result.get("confidence", 0))),
-            side=ai_result.get("side", "yes"),
+            side=side,
             size=Decimal(str(order_size)),
             stop_loss_price=Decimal(str(ai_result.get("stop_loss", 0))) if ai_result.get("stop_loss") else None,
             take_profit_price=Decimal(str(ai_result.get("take_profit", 0))) if ai_result.get("take_profit") else None,
@@ -989,6 +1633,7 @@ class StrategyRunner:
             decision_details=ai_result.get("decision_details"),
             market_id=market_id,
             symbol=symbol,
+            signal_generated_at=datetime.utcnow(),
         )
 
         db.add(signal_log)
@@ -996,7 +1641,6 @@ class StrategyRunner:
 
         # 12. Position limits check before execution
         action = ai_result.get("action")
-        side = ai_result.get("side", "yes")
 
         if action in ["buy", "sell"]:
             from sqlalchemy import func as sa_func
@@ -1052,18 +1696,22 @@ class StrategyRunner:
             return []
 
         try:
-            # ClobClient v2 has no get_positions() — use HTTP directly
-            import httpx
-
-            api_key = getattr(getattr(self.clob_client, "creds", None), "api_key", None)
-            if not api_key:
-                logger.warning("No API key available for positions fetch")
+            # Resolve wallet address for data-api query
+            wallet_result = await db.execute(
+                select(Wallet)
+                .where(Wallet.user_id == strategy.user_id, Wallet.is_default == True)
+                .limit(1)
+            )
+            wallet = wallet_result.scalar_one_or_none()
+            user_address = (wallet.proxy_wallet_address if wallet else None) or (wallet.address if wallet else None)
+            if not user_address:
+                logger.warning("No default wallet address for positions fetch")
                 return []
-            headers = {"POLYMARKET_API_KEY": api_key}
+
             async with httpx.AsyncClient(timeout=15.0, proxy=self._proxy_url) as client:
                 resp = await client.get(
-                    "https://clob.polymarket.com/positions",
-                    headers=headers,
+                    f"https://data-api.polymarket.com/positions",
+                    params={"user": user_address},
                 )
                 resp.raise_for_status()
                 raw_positions = resp.json()
@@ -1084,6 +1732,11 @@ class StrategyRunner:
                 size = float(p.get("quantity") or p.get("size") or p.get("amount", 0))
                 if size <= 0:
                     continue  # Skip zero/closed positions
+
+                # Skip positions with zero current value (settled/dust)
+                current_value = float(p.get("currentValue") or p.get("current_value") or p.get("value", size))
+                if current_value <= 0:
+                    continue
 
                 token_id = p.get("token_id") or p.get("asset_id") or ""
                 market_id = p.get("market_id") or p.get("condition_id") or ""
@@ -1123,7 +1776,7 @@ class StrategyRunner:
                 else:
                     # On-chain position not in DB (possibly manual trade) — create record
                     new_pos = Position(
-                        id=UUID(),
+                        id=uuid4(),
                         portfolio_id=strategy.portfolio_id,
                         strategy_id=strategy.id,
                         market_id=ocp["market_id"],
@@ -1348,8 +2001,7 @@ class StrategyRunner:
 
             # Create closing order record
             close_order = Order(
-                id=UUID(),
-                user_id=strategy.user_id,
+                id=uuid4(),
                 portfolio_id=strategy.portfolio_id,
                 strategy_id=strategy.id,
                 position_id=position.id,
@@ -1372,11 +2024,11 @@ class StrategyRunner:
                 + (reason if exit_type != "fixed" else "Fixed rule triggered. No AI analysis needed.")
             )
             sell_signal = SignalLog(
-                id=UUID(),
+                id=uuid4(),
                 user_id=strategy.user_id,
                 portfolio_id=strategy.portfolio_id,
                 strategy_id=strategy.id,
-                signal_id=str(UUID()),
+                signal_id=str(uuid4()),
                 signal_type="sell",
                 confidence=Decimal("1.0") if exit_type == "fixed" else Decimal("0.75"),
                 side=position.side,
@@ -1402,34 +2054,122 @@ class StrategyRunner:
         except Exception as e:
             logger.exception("Close position failed for %s: %s", position.id, e)
 
-    async def _get_available_markets(self, strategy: Strategy) -> list[dict]:
-        """Fetch available markets from Gamma API with caching."""
+    async def _fetch_gamma_token_details(self, numeric_id: str) -> Optional[list[dict]]:
+        """Fetch token details from Gamma single-market API by numeric id.
+
+        Gamma /markets/{id} returns 'clobTokenIds' as a JSON string array,
+        which is no longer included in the /markets list response.
+        """
+        try:
+            resp = await self._http_client.get(
+                f"https://gamma-api.polymarket.com/markets/{numeric_id}",
+            )
+            if resp.status_code != 200:
+                strategy_exec_logger.debug("[GAMMA] token details %s returned %s", numeric_id, resp.status_code)
+                return None
+            data = resp.json()
+
+            clob_ids_raw = data.get("clobTokenIds")
+            outcomes_raw = data.get("outcomes")
+            if not clob_ids_raw:
+                strategy_exec_logger.debug("[GAMMA] no clobTokenIds for %s", numeric_id)
+                return None
+
+            # Handle both JSON-string and raw-list formats
+            import json
+            if isinstance(clob_ids_raw, str):
+                clob_ids = json.loads(clob_ids_raw)
+            elif isinstance(clob_ids_raw, list):
+                clob_ids = clob_ids_raw
+            else:
+                clob_ids = []
+
+            if isinstance(outcomes_raw, str):
+                outcomes = json.loads(outcomes_raw)
+            elif isinstance(outcomes_raw, list):
+                outcomes = outcomes_raw
+            else:
+                outcomes = []
+
+            tokens = []
+            for i, tid in enumerate(clob_ids):
+                outcome = outcomes[i] if i < len(outcomes) else ""
+                tokens.append({"token_id": str(tid), "outcome": outcome})
+            strategy_exec_logger.debug("[GAMMA] fetched %d tokens for market %s", len(tokens), numeric_id)
+            return tokens
+        except Exception as e:
+            strategy_exec_logger.warning("[GAMMA] failed to fetch token details for %s: %s", numeric_id, e)
+            return None
+
+    async def _get_available_markets(
+        self, strategy: Strategy, data_source: Optional[Any] = None
+    ) -> list[dict]:
+        """Fetch available markets from WebSocket activity (primary) or Gamma API (fallback).
+
+        Primary source: ActivityAnalyzer hot markets (WebSocket-driven, real-time).
+        Fallback: Gamma API list when activity data is insufficient.
+        """
         # 1. Try cache first
         cached = self._get_cached_markets()
         if cached:
-            logger.info("Using cached markets: %d markets", len(cached))
             return cached
 
-        # 2. Fetch from Gamma API
-        try:
-            async with httpx.AsyncClient(proxy=self._proxy_url) as client:
-                resp = await client.get(
-                    "https://gamma-api.polymarket.com/markets",
-                    params={
-                        "active": "true",
-                        "archived": "false",
-                        "closed": "false",
-                        "limit": 100,
-                        "order": "volume",
-                        "ascending": "false",
-                    },
-                    timeout=15,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+        # 2. Primary: get hot markets from ActivityAnalyzer via data_source
+        if data_source is not None and hasattr(data_source, "get_hot_markets"):
+            try:
+                hot_markets = data_source.get_hot_markets(limit=50, min_score=0.0)
+                if hot_markets:
+                    # Filter out markets without token_id (can't get price without it)
+                    valid = [m for m in hot_markets if m.get("token_id")]
+                    strategy_exec_logger.info(
+                        "[ACTIVITY] hot markets: %d total, %d with token_id",
+                        len(hot_markets), len(valid),
+                    )
+                    if valid:
+                        self._cache_markets(valid, incremental=True)
+                        # Return enriched versions from cache if available
+                        enriched = []
+                        for m in valid:
+                            cid = m.get("conditionId") or m.get("condition_id") or m.get("id", "")
+                            if cid and cid in self._market_cache:
+                                enriched.append(self._market_cache[cid])
+                            else:
+                                enriched.append(m)
+                        return enriched
+            except Exception as e:
+                logger.warning("Activity hot markets failed: %s", e)
 
-            markets = data if isinstance(data, list) else data.get("markets", [])
+        # 3. Fallback: fetch from Gamma API (paginated)
+        try:
+            all_markets: List[dict] = []
+            offset = 0
+            page_limit = 1000
+            max_pages = 10
+            async with httpx.AsyncClient(proxy=self._proxy_url) as client:
+                for page in range(max_pages):
+                    resp = await client.get(
+                        "https://gamma-api.polymarket.com/markets",
+                        params={
+                            "active": "true",
+                            "closed": "false",
+                            "limit": page_limit,
+                            "offset": offset,
+                        },
+                        timeout=30,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    page_markets = data if isinstance(data, list) else data.get("markets", [])
+                    if not page_markets:
+                        break
+                    all_markets.extend(page_markets)
+                    if len(page_markets) < page_limit:
+                        break
+                    offset += page_limit
+
+            markets = all_markets
             strategy_exec_logger.info("[GAMMA] raw response: %d markets", len(markets))
+
             def _parse_volume(m: dict) -> float:
                 v = m.get("volume", 0)
                 if v is None:
@@ -1444,9 +2184,30 @@ class StrategyRunner:
             for handler in strategy_exec_logger.handlers:
                 handler.flush()
 
-            # 3. Cache and build mappings
-            self._cache_markets(filtered)
-            logger.info("Fetched %d markets from Gamma API", len(filtered))
+            # Supplement token data from Gamma single-market API
+            import asyncio
+            tasks = []
+            market_idx = []
+            for idx, m in enumerate(filtered):
+                if m.get("tokens"):
+                    continue
+                numeric_id = m.get("id")
+                if numeric_id:
+                    tasks.append(self._fetch_gamma_token_details(str(numeric_id)))
+                    market_idx.append(idx)
+
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                supplemented = 0
+                for idx, tokens in zip(market_idx, results):
+                    if isinstance(tokens, list) and tokens:
+                        filtered[idx]["tokens"] = tokens
+                        supplemented += 1
+                if supplemented:
+                    strategy_exec_logger.info("[GAMMA] supplemented tokens for %d markets", supplemented)
+
+            self._cache_markets(filtered, incremental=True)
+            logger.info("Fetched %d markets from Gamma API (fallback)", len(filtered))
             return filtered
 
         except Exception as e:
@@ -1463,13 +2224,17 @@ class StrategyRunner:
             capital_flow_weight=params.get("capital_flow_weight", 0.20),
             information_edge_weight=params.get("information_edge_weight", 0.20),
             strong_buy_threshold=params.get("strong_buy_threshold", 0.80),
-            buy_threshold=params.get("buy_threshold", 0.65),
-            hold_threshold=params.get("hold_threshold", 0.45),
+            buy_threshold=params.get("buy_threshold", 0.30),
+            hold_threshold=params.get("hold_threshold", 0.20),
             max_single_position_pct=float(strategy.max_position_size) / 100
             if strategy.max_position_size and strategy.max_position_size > 0
             else 0.10,
             max_total_positions=strategy.max_positions or 20,
-            min_liquidity=float(strategy.min_liquidity) if strategy.min_liquidity else 10000.0,
+            min_liquidity=float(strategy.min_liquidity) if strategy.min_liquidity else 0.0,
+            enable_death_zone_check=False,
+            min_odds_edge=params.get("min_odds_edge", 0.01),
+            min_imbalance_ratio=params.get("min_imbalance_ratio", -1.0),
+            min_smart_money_threshold=params.get("min_smart_money_threshold", -1.0),
         )
 
     def _build_market_context(
@@ -1488,7 +2253,7 @@ class StrategyRunner:
         odds_bias = OddsBiasMetrics(
             implied_probability=current_price,
             estimated_true_probability=min(1.0, max(0.0, current_price + (current_price - 0.5) * 0.1)),
-            edge=distance_from_mid * 0.15,
+            edge=distance_from_mid,
             confidence=min(1.0, 0.5 + distance_from_mid),
         )
 
@@ -1564,14 +2329,24 @@ class StrategyRunner:
                     event_strength=sports_signal.get("strength", "weak"),
                 )
 
+        # Ensure numeric types (JSON fields may be strings)
+        try:
+            liquidity_val = float(market.get("liquidity", 0) or 0)
+        except (ValueError, TypeError):
+            liquidity_val = 0.0
+        try:
+            volume_val = float(market_data.volume or market.get("volume", 0) or 0)
+        except (ValueError, TypeError):
+            volume_val = 0.0
+
         return BuyMarketContext(
             market_id=market.get("id", ""),
-            outcome_id=market.get("token_id", ""),
+            outcome_id=token_id or market.get("token_id", ""),
             current_price=current_price,
             current_odds=current_price,
             timestamp=datetime.utcnow(),
-            volume_24h=market_data.volume or market.get("volume", 0),
-            liquidity=market.get("liquidity", 0),
+            volume_24h=volume_val,
+            liquidity=liquidity_val,
             odds_bias=odds_bias,
             time_decay=time_decay,
             orderbook_pressure=orderbook_pressure,
@@ -1586,14 +2361,23 @@ class StrategyRunner:
         """Call AI to analyze markets with factor scores as structured context."""
         import json
 
-        # Get Provider config
+        # Get Provider config (cached per strategy)
         provider = None
         if strategy.provider_id:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Provider).where(Provider.id == strategy.provider_id)
-                )
-                provider = result.scalar_one_or_none()
+            cached = self._provider_cache.get(strategy.id)
+            if cached is not None:
+                provider = cached
+            else:
+                try:
+                    async with AsyncSessionLocal() as db:
+                        result = await db.execute(
+                            select(Provider).where(Provider.id == strategy.provider_id)
+                        )
+                        provider = result.scalar_one_or_none()
+                        self._provider_cache[strategy.id] = provider
+                except Exception as e:
+                    logger.warning("Provider query failed for strategy %s: %s", strategy.id, e)
+                    self._provider_cache[strategy.id] = None
 
         if not provider or not provider.api_key:
             logger.warning("No provider or API key found for strategy %s", strategy.id)
@@ -1650,41 +2434,51 @@ class StrategyRunner:
 
         start_time = datetime.utcnow()
 
-        try:
-            async with httpx.AsyncClient(timeout=60.0, proxy=self._proxy_url) as client:
-                response = await client.post(
-                    f"{api_base}/chat/completions",
-                    headers=headers,
-                    json=payload,
-                )
-                response.raise_for_status()
-                result = response.json()
+        async with self._ai_semaphore:
+            for attempt in range(3):
+                try:
+                    async with httpx.AsyncClient(timeout=60.0, proxy=self._proxy_url) as client:
+                        response = await client.post(
+                            f"{api_base}/chat/completions",
+                            headers=headers,
+                            json=payload,
+                        )
+                        response.raise_for_status()
+                        result = response.json()
 
-            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                    duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
-            content = result["choices"][0]["message"]["content"]
-            ai_result = json.loads(content)
+                    content = result["choices"][0]["message"]["content"]
+                    ai_result = json.loads(content)
 
-            ai_result["model"] = model
-            ai_result["duration_ms"] = duration_ms
-            ai_result["tokens_used"] = result.get("usage", {}).get("total_tokens", 0)
+                    ai_result["model"] = model
+                    ai_result["duration_ms"] = duration_ms
+                    ai_result["tokens_used"] = result.get("usage", {}).get("total_tokens", 0)
 
-            ai_result["input_summary"] = {
-                "markets_count": len(markets),
-                "data_sources": strategy.data_sources or {},
-                "market_filter_days": strategy.market_filter_days,
-            }
+                    ai_result["input_summary"] = {
+                        "markets_count": len(markets),
+                        "data_sources": strategy.data_sources or {},
+                        "market_filter_days": strategy.market_filter_days,
+                    }
 
-            if not ai_result.get("market_id") and markets:
-                ai_result["market_id"] = markets[0].get("id", "")
-                ai_result["symbol"] = markets[0].get("symbol", "")
+                    if not ai_result.get("market_id") and markets:
+                        ai_result["market_id"] = markets[0].get("id", "")
+                        ai_result["symbol"] = markets[0].get("symbol", "")
 
-            logger.info("AI analysis completed: %s %s @ %.2f", ai_result.get('action'), ai_result.get('side'), ai_result.get('confidence'))
-            return ai_result
+                    logger.info("AI analysis completed: %s %s @ %.2f", ai_result.get('action'), ai_result.get('side'), ai_result.get('confidence'))
+                    return ai_result
 
-        except Exception as e:
-            logger.error("AI API call failed: %s", e)
-            return self._generate_mock_ai_result(markets)
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429 and attempt < 2:
+                        wait = 2 ** attempt
+                        logger.warning("AI API rate limited (429), retrying in %ds...", wait)
+                        await asyncio.sleep(wait)
+                        continue
+                    logger.error("AI API call failed: %s", e)
+                    return self._generate_mock_ai_result(markets)
+                except Exception as e:
+                    logger.error("AI API call failed: %s", e)
+                    return self._generate_mock_ai_result(markets)
 
     def _get_default_system_prompt(self) -> str:
         """Get default system prompt for trading."""
@@ -1780,7 +2574,7 @@ Explain how the factor scores influenced (or contradicted) your final decision."
         return prompt
 
     def _generate_mock_ai_result(self, markets: list[dict]) -> dict:
-        """Generate mock AI result for testing."""
+        """Generate mock AI result based on factor scores (deterministic)."""
         if not markets:
             return {
                 "action": "hold",
@@ -1796,26 +2590,27 @@ Explain how the factor scores influenced (or contradicted) your final decision."
                 "tokens_used": 0,
             }
 
-        import random
-        market = random.choice(markets)
-        price = market.get("_current_price", market.get("price", 0.5))
+        # Pick the market with the highest factor score
+        best = max(markets, key=lambda m: m.get("_factor_score", 0))
+        price = best.get("_current_price", best.get("price", 0.5))
+        factor_score = best.get("_factor_score", 0.5)
+        factor_decision = best.get("_factor_decision", "hold")
 
-        actions = ["buy", "sell", "hold"]
-        action = random.choice(actions)
-        side = "yes" if random.random() > 0.5 else "no"
-        confidence = round(random.uniform(0.3, 0.9), 2)
+        action = "buy" if factor_decision in ("buy", "strong_buy") else "hold"
+        side = best.get("_side", "yes")
+        confidence = round(min(0.95, max(0.55, factor_score + 0.25)), 2)
 
         return {
-            "action": action if action != "hold" else "hold",
+            "action": action,
             "side": side,
             "confidence": confidence,
-            "reasoning": f"Mock analysis: Price at {price}, confidence {confidence}",
+            "reasoning": f"Mock analysis: Price at {price}, factor_score {factor_score:.2f}, confidence {confidence}",
             "thinking": "This is a mock result for testing purposes",
-            "stop_loss": round(price * 0.9, 2) if action == "buy" else round(price * 1.1, 2),
-            "take_profit": round(price * 1.2, 2) if action == "buy" else round(price * 0.8, 2),
+            "stop_loss": round(price * 0.9, 2) if action == "buy" else None,
+            "take_profit": round(price * 1.2, 2) if action == "buy" else None,
             "risk_reward": 2.0,
-            "market_id": market.get("id", ""),
-            "symbol": market.get("symbol", ""),
+            "market_id": best.get("id", ""),
+            "symbol": best.get("symbol", ""),
             "model": "mock",
             "duration_ms": 100,
             "tokens_used": 50,
@@ -1854,19 +2649,35 @@ Explain how the factor scores influenced (or contradicted) your final decision."
                 logger.warning("Token not found for side: %s", signal_log.side)
                 return
 
-            # Execute market order
-            from py_clob_client.clob_types import MarketOrderArgs
+            # Execute as a marketable limit order to avoid py-clob-client
+            # market-order rounding bugs that violate tick-size rules.
+            from py_clob_client.clob_types import OrderArgs
             from py_clob_client.order_builder.constants import BUY, SELL
 
             order_side = BUY if signal_log.side == "yes" else SELL
-            order_args = MarketOrderArgs(
+            eval_price = float(signal_log.current_market_price or 0.5)
+            tick = 0.01
+            if order_side == BUY:
+                # Buy at or slightly above market to ensure immediate fill
+                limit_price = min(0.99, round(eval_price + tick, 2))
+            else:
+                # Sell at or slightly below market to ensure immediate fill
+                limit_price = max(0.01, round(eval_price - tick, 2))
+
+            # Size in OrderArgs is number of outcome tokens (shares).
+            shares = round(float(signal_log.size) / limit_price, 2)
+            if shares < 0.01:
+                shares = 0.01
+
+            order_args = OrderArgs(
                 token_id=token_id,
-                amount=float(signal_log.size),
+                price=limit_price,
+                size=shares,
                 side=order_side,
             )
 
             signed_order = await asyncio.to_thread(
-                self.clob_client.create_market_order, order_args
+                self.clob_client.create_order, order_args
             )
             result = await asyncio.to_thread(
                 self.clob_client.post_order, signed_order
@@ -1879,8 +2690,7 @@ Explain how the factor scores influenced (or contradicted) your final decision."
 
             # Create Order record
             order = Order(
-                id=UUID(),
-                user_id=strategy.user_id,
+                id=uuid4(),
                 portfolio_id=strategy.portfolio_id,
                 strategy_id=strategy.id,
                 signal_id=signal_log.signal_id,
@@ -1900,12 +2710,18 @@ Explain how the factor scores influenced (or contradicted) your final decision."
 
             # Create Position record for tracking
             current_price = float(avg_fill_price) if avg_fill_price > 0 else 0.5
+            # Look up market title for display
+            market_title = ""
+            cached_market = self._market_cache.get(signal_log.market_id or "")
+            if cached_market:
+                market_title = cached_market.get("question") or cached_market.get("title") or ""
+            display_symbol = signal_log.symbol or market_title or signal_log.market_id
             position = Position(
-                id=UUID(),
+                id=uuid4(),
                 portfolio_id=strategy.portfolio_id,
                 strategy_id=strategy.id,
                 market_id=signal_log.market_id,
-                symbol=signal_log.symbol or signal_log.market_id,
+                symbol=display_symbol,
                 side=signal_log.side,
                 status="open",
                 size=fill_size,
@@ -1918,6 +2734,11 @@ Explain how the factor scores influenced (or contradicted) your final decision."
                 last_updated_at=datetime.utcnow(),
                 source="signal",
                 signal_id=str(signal_log.signal_id),
+                position_metadata={
+                    "market_name": display_symbol,
+                    "title": market_title or display_symbol,
+                    "outcome": signal_log.side,
+                },
             )
             db.add(position)
             await db.commit()
@@ -1968,28 +2789,55 @@ Explain how the factor scores influenced (or contradicted) your final decision."
         # 2. HTTP fallback
         try:
             async with httpx.AsyncClient(proxy=self._proxy_url) as client:
+                # Try direct lookup first
                 resp = await client.get(
                     f"https://gamma-api.polymarket.com/markets/{condition_id}",
                     timeout=10,
                 )
-                resp.raise_for_status()
-                market = resp.json()
+                if resp.status_code == 200:
+                    market = resp.json()
+                else:
+                    # Fallback: search via list endpoint
+                    search_resp = await client.get(
+                        "https://gamma-api.polymarket.com/markets",
+                        params={"conditionIds": condition_id, "limit": 1},
+                        timeout=10,
+                    )
+                    if search_resp.status_code == 200:
+                        data = search_resp.json()
+                        markets = data if isinstance(data, list) else data.get("markets", [])
+                        if markets:
+                            market = markets[0]
+                        else:
+                            return None
+                    else:
+                        return None
 
             # Update cache with this single market
-            self._market_cache[condition_id] = market
+            hex_cid = market.get("conditionId") or market.get("condition_id") or condition_id
+            numeric_id = market.get("id")
+            self._market_cache[hex_cid] = market
+            if numeric_id:
+                self._market_cache[str(numeric_id)] = market
+
+            # Supplement token details if missing
+            if not market.get("tokens") and numeric_id:
+                tokens = await self._fetch_gamma_token_details(str(numeric_id))
+                if tokens:
+                    market["tokens"] = tokens
 
             for token in market.get("tokens", []):
                 if token.get("outcome", "").lower() == side.lower():
                     tid = token.get("token_id")
                     if tid:
-                        self._token_to_condition[tid] = condition_id
+                        self._token_to_condition[tid] = hex_cid
                     return tid
 
             clob_ids = market.get("clob_token_ids", {})
             if isinstance(clob_ids, dict):
                 tid = clob_ids.get(side.lower())
                 if tid:
-                    self._token_to_condition[tid] = condition_id
+                    self._token_to_condition[tid] = hex_cid
                 return tid
 
         except Exception as e:

@@ -1,6 +1,6 @@
 # JMWL Trading Backend - Makefile
 
-.PHONY: help install dev test lint format migrate seed clean docker-build docker-run
+.PHONY: help install dev api worker test lint format migrate seed clean docker-build docker-run
 
 # Default target
 help:
@@ -26,7 +26,17 @@ install:
 
 # Development server
 dev:
+	@echo "请开两个终端分别运行："
+	@echo "  make api"
+	@echo "  make worker"
+
+# Pure API service
+api:
 	poetry run uvicorn src.main:app --reload --host 0.0.0.0 --port 3001
+
+# Strategy worker (background tasks)
+worker:
+	poetry run python src/worker.py
 
 # Testing
 test:

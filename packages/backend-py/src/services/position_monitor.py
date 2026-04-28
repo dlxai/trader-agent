@@ -1,6 +1,7 @@
 """Position monitor for stop-loss and take-profit - real-time monitoring."""
 
 import asyncio
+import logging
 import os
 from datetime import datetime
 from decimal import Decimal
@@ -18,6 +19,27 @@ from src.models.wallet import Wallet
 from src.models.portfolio import Portfolio
 from src.core.crypto import decrypt_private_key
 from src.services.data_source_manager import get_data_source_manager, DataSource
+
+logger = logging.getLogger("worker.monitor")
+
+
+async def _fetch_market_title(market_id: str) -> str:
+    """Fetch market title from Gamma API when data-api doesn't provide one."""
+    if not market_id or not market_id.startswith("0x"):
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"condition_ids": market_id},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data[0].get("question") or data[0].get("title") or ""
+    except Exception:
+        pass
+    return ""
 
 
 class PositionMonitor:
@@ -39,10 +61,12 @@ class PositionMonitor:
         self._wallet_address: Optional[str] = None  # Wallet address for API calls
         self._proxy_wallet_address: Optional[str] = None  # Proxy wallet address for position queries
         self._proxy_url = os.environ.get("PROXY_URL") or os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def start(self) -> None:
         """Start the position monitor."""
         self._running = True
+        self._loop = asyncio.get_running_loop()
 
         # 获取活跃钱包
         async with AsyncSessionLocal() as db:
@@ -52,7 +76,7 @@ class PositionMonitor:
             wallet = result.scalar_one_or_none()
 
             if not wallet:
-                print("No active wallet found, position monitor not started")
+                logger.info("No active wallet found, position monitor not started")
                 return
 
             # 解密私钥
@@ -69,7 +93,7 @@ class PositionMonitor:
             portfolio = result.scalar_one_or_none()
 
             if not portfolio:
-                print("No portfolio found, position monitor not started")
+                logger.info("No portfolio found, position monitor not started")
                 return
 
             self._portfolio_id = portfolio.id
@@ -90,7 +114,7 @@ class PositionMonitor:
                 api_creds = self._clob_client.create_or_derive_api_creds()
                 self._clob_client.set_api_creds(api_creds)
             except Exception as e:
-                print(f"Failed to initialize ClobClient: {e}")
+                logger.info(f"Failed to initialize ClobClient: {e}")
                 return
 
             # 创建 DataSource 用于 WebSocket 订阅价格（可选，失败不影响持仓同步）
@@ -99,8 +123,11 @@ class PositionMonitor:
                     portfolio_id=self._portfolio_id,
                     source_type="polymarket",
                 )
+                # 注册价格实时回调，价格变化立即检查止损止盈
+                if hasattr(self._data_source, "register_price_handler"):
+                    self._data_source.register_price_handler(self._on_price_update)
             except Exception as e:
-                print(f"DataSource creation failed (WebSocket monitoring disabled): {e}")
+                logger.info(f"DataSource creation failed (WebSocket monitoring disabled): {e}")
                 self._data_source = None
 
         asyncio.create_task(self._monitor_loop())
@@ -109,25 +136,56 @@ class PositionMonitor:
         """Stop the position monitor."""
         self._running = False
         self._clob_client = None
+        if self._data_source and hasattr(self._data_source, "unregister_price_handler"):
+            try:
+                self._data_source.unregister_price_handler(self._on_price_update)
+            except Exception:
+                pass
         if self._data_source:
             await get_data_source_manager().remove_source(self._portfolio_id)
         self._data_source = None
 
+    def _on_price_update(self, token_id: str, price: float) -> None:
+        """价格实时回调：WebSocket 价格变化时立即检查止损止盈。
+
+        注意：此回调在 PriceMonitor 的 WebSocket 线程中执行，
+        必须使用 run_coroutine_threadsafe 将协程投递到主事件循环。
+        """
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                self._check_position_by_token(token_id, price), self._loop
+            )
+        else:
+            logger.debug("PositionMonitor loop not ready, skip price update for %s", token_id)
+
+    async def _check_position_by_token(self, token_id: str, price: float) -> None:
+        """根据 token_id 查找持仓并评估是否触发止损止盈。"""
+        position = self._position_cache.get(token_id)
+        if not position:
+            return
+        try:
+            async with AsyncSessionLocal() as db:
+                await self._evaluate_exit_conditions(db, position, Decimal(str(price)))
+                await db.commit()
+        except Exception as e:
+            logger.error(f"Price callback check error for {token_id}: {e}")
+
     async def _monitor_loop(self) -> None:
-        """Main monitoring loop - runs every 60s."""
+        """Main monitoring loop - runs every 60s for on-chain sync and subscription only.
+
+        Stop-loss / take-profit checks are now triggered in real-time via
+        WebSocket price callbacks (_on_price_update).
+        """
         while self._running:
             try:
                 async with AsyncSessionLocal() as db:
                     # 1. 同步链上持仓到本地数据库
                     await self._sync_positions_from_chain(db)
 
-                    # 2. 订阅持仓 token_ids 到 WebSocket
+                    # 2. 订阅持仓 token_ids 到 WebSocket（动态增删）
                     await self._subscribe_positions(db)
-
-                    # 3. 用缓存的价格检查止损/止盈（实时触发在 on_price_update 里）
-                    await self._check_all_positions(db)
             except Exception as e:
-                print(f"Position monitor error: {e}")
+                logger.info(f"Position monitor error: {e}")
 
             await asyncio.sleep(self._sync_interval)
 
@@ -182,13 +240,13 @@ class PositionMonitor:
                 market_id = p.get("conditionId") or p.get("marketId") or ""
                 title = p.get("title") or p.get("question") or p.get("marketName") or p.get("market") or ""
                 outcome = p.get("outcome") or p.get("position") or ""
-                side = (p.get("side") or "BUY").lower()
-                if side in ("buy", "BUY"):
-                    side = "yes"
-                elif side in ("sell", "SELL"):
-                    side = "no"
-                else:
-                    side = "yes"
+                # data-api has no "side" field; derive from outcome
+                side = "yes" if outcome.lower() == "yes" else "no"
+
+                avg_price = float(p.get("avgPrice") or p.get("avgCost") or p.get("avg_cost") or 0.5)
+                cur_price = float(p.get("curPrice") or 0)
+                cash_pnl = float(p.get("cashPnl") or p.get("unrealizedPnl") or p.get("unrealized_pnl") or 0)
+                percent_pnl = float(p.get("percentPnl") or p.get("percentPnl") or 0)
 
                 onchain_list.append({
                     "token_id": token_id,
@@ -197,8 +255,10 @@ class PositionMonitor:
                     "outcome": outcome,
                     "side": side,
                     "size": Decimal(str(size)),
-                    "avg_price": float(p.get("avgCost") or p.get("avgPrice") or p.get("avg_cost") or 0.5),
-                    "unrealized_pnl": float(p.get("unrealizedPnl") or p.get("unrealized_pnl") or 0),
+                    "avg_price": avg_price,
+                    "cur_price": cur_price,
+                    "unrealized_pnl": cash_pnl,
+                    "pnl_percent": percent_pnl,
                 })
 
             if not onchain_list:
@@ -228,21 +288,30 @@ class PositionMonitor:
                 key = (ocp["token_id"], ocp["side"])
                 onchain_keys.add(key)
 
-                display_name = ocp.get("title") or ocp.get("outcome") or (ocp["market_id"][:50] if ocp["market_id"] else "unknown")
+                title = ocp.get("title") or ""
+                if not title and ocp.get("market_id"):
+                    title = await _fetch_market_title(ocp["market_id"])
+                display_name = title or ocp.get("outcome") or (ocp["market_id"][:50] if ocp["market_id"] else "unknown")
                 avg_price = Decimal(str(ocp["avg_price"]))
                 size = ocp["size"]
                 unrealized = Decimal(str(ocp["unrealized_pnl"]))
-                # Derive current price from cost basis + unrealized PnL
-                if size > 0:
-                    current_price = avg_price + (unrealized / size)
+                # Use curPrice from data-api if available; otherwise derive
+                if ocp.get("cur_price"):
+                    current_price = Decimal(str(ocp["cur_price"]))
                 else:
-                    current_price = avg_price
-                # Compute PnL percent
-                cost_basis = avg_price * size
-                if cost_basis > 0:
-                    pnl_percent = (unrealized / cost_basis) * Decimal("100")
+                    if size > 0:
+                        current_price = avg_price + (unrealized / size)
+                    else:
+                        current_price = avg_price
+                # Use percentPnl from data-api if available; otherwise compute
+                if ocp.get("pnl_percent"):
+                    pnl_percent = Decimal(str(ocp["pnl_percent"]))
                 else:
-                    pnl_percent = Decimal("0")
+                    cost_basis = avg_price * size
+                    if cost_basis > 0:
+                        pnl_percent = (unrealized / cost_basis) * Decimal("100")
+                    else:
+                        pnl_percent = Decimal("0")
 
                 if key in local_positions:
                     # 更新已有持仓
@@ -259,6 +328,8 @@ class PositionMonitor:
                         local_pos.symbol = display_name
                         meta = local_pos.position_metadata or {}
                         meta["market_name"] = display_name
+                        meta["title"] = title or display_name
+                        meta["outcome"] = ocp.get("outcome") or local_pos.side
                         local_pos.position_metadata = meta
                     # 更新缓存
                     if ocp["token_id"]:
@@ -287,6 +358,8 @@ class PositionMonitor:
                         position_metadata={
                             "token_id": ocp["token_id"],
                             "market_name": display_name,
+                            "title": title or display_name,
+                            "outcome": ocp.get("outcome") or ocp["side"],
                         },
                     )
                     db.add(new_pos)
@@ -305,7 +378,7 @@ class PositionMonitor:
             await db.commit()
 
         except Exception as e:
-            print(f"Failed to sync positions from chain: {e}")
+            logger.info(f"Failed to sync positions from chain: {e}")
 
     async def _subscribe_positions(self, db: AsyncSession) -> None:
         """订阅持仓 token_ids 到 WebSocket."""
@@ -326,10 +399,10 @@ class PositionMonitor:
 
             if token_ids:
                 await self._data_source.subscribe(token_ids)
-                print(f"Subscribed to {len(token_ids)} position tokens")
+                logger.info(f"Subscribed to {len(token_ids)} position tokens")
 
         except Exception as e:
-            print(f"Failed to subscribe positions: {e}")
+            logger.info(f"Failed to subscribe positions: {e}")
 
     async def _check_all_positions(self, db: AsyncSession) -> None:
         """检查所有持仓的止损/止盈（用缓存价格）."""
@@ -349,7 +422,7 @@ class PositionMonitor:
                 await self._check_position_with_datasource(db, position)
 
         except Exception as e:
-            print(f"Failed to check positions: {e}")
+            logger.info(f"Failed to check positions: {e}")
 
     async def _check_position_with_datasource(
         self, db: AsyncSession, position: Position
@@ -429,14 +502,14 @@ class PositionMonitor:
         close_reason: str,
     ) -> None:
         """关闭持仓."""
-        print(f"Closing position {position.id}: {close_reason}")
+        logger.info(f"Closing position {position.id}: {close_reason}")
 
         try:
             # 获取当前价格（从缓存或重新获取）
             current_price = position.current_price
 
             if not self._data_source:
-                print("No data source, cannot close position properly")
+                logger.info("No data source, cannot close position properly")
                 position.status = "closed"
                 position.closed_at = datetime.utcnow()
                 await db.commit()
@@ -448,7 +521,7 @@ class PositionMonitor:
             # 获取 token_id for 平仓方向
             token_id = position.token_id
             if not token_id:
-                print(f"No token_id for position {position.id}")
+                logger.info(f"No token_id for position {position.id}")
                 position.status = "closed"
                 position.closed_at = datetime.utcnow()
                 await db.commit()
@@ -462,7 +535,7 @@ class PositionMonitor:
                         market_data.yes_price if close_side == "yes" else market_data.no_price
                     ))
             except Exception as e:
-                print(f"Failed to get market price: {e}")
+                logger.info(f"Failed to get market price: {e}")
 
             # 计算盈亏
             size = position.size
@@ -483,10 +556,10 @@ class PositionMonitor:
                 del self._position_cache[position.token_id]
 
             await db.commit()
-            print(f"Position {position.id} closed: PnL = {pnl}")
+            logger.info(f"Position {position.id} closed: PnL = {pnl}")
 
         except Exception as e:
-            print(f"Error closing position: {e}")
+            logger.info(f"Error closing position: {e}")
             await db.rollback()
 
 

@@ -313,11 +313,11 @@ class StrategyFilters(BaseSchema):
     dead_zone_max: float = Field(default=0.85, ge=0, le=1)
     keywords_exclude: List[str] = Field(default_factory=lambda: ["o/u", "spread"])
 
-    # 到期时间过滤（来自 polymarket-agent）
-    # 超过这个小时数的市场不交易
-    # 通用策略：6（超过6小时忽略）
-    # 尾盘策略：2（超过2小时忽略）
-    max_hours_to_expiry: float = Field(default=6.0)
+    # 到期时间策略（由 ExpiryPolicy 统一处理）
+    # SignalFilter 和 EntryCondition 不再拦截时间
+    min_hours_to_expiry: float = Field(default=1.0)
+    max_days_to_expiry: float = Field(default=14.0)
+    avoid_last_minutes_before_expiry: float = Field(default=30.0)
 
 
 class StrategyPositionMonitor(BaseSchema):

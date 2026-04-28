@@ -291,6 +291,9 @@ export interface PositionSummary {
   pnl_percent: number
   opened_at: string
   leverage: number
+  market_name?: string
+  title?: string
+  outcome?: string
   portfolio?: {
     id: string
     name: string

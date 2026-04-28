@@ -107,14 +107,14 @@ class EntryConditionConfig:
     min_liquidity: float = 1000.0  # 最小流动性（USD）
     min_order_book_depth: float = 500.0  # 最小订单簿深度
 
-    # 到期时间限制
-    min_time_to_expiry: timedelta = field(default_factory=lambda: timedelta(hours=24))
-    max_time_to_expiry: timedelta = field(default_factory=lambda: timedelta(days=365))
-    avoid_expiry_within: timedelta = field(default_factory=lambda: timedelta(hours=6))
+    # 到期时间限制（Optional；默认 None 表示不检查，由上层 ExpiryPolicy 统一处理）
+    min_time_to_expiry: Optional[timedelta] = None
+    max_time_to_expiry: Optional[timedelta] = None
+    avoid_expiry_within: Optional[timedelta] = None
 
     # 波动率限制
     max_volatility: float = 0.50  # 最大日波动率（50%）
-    min_volatility: float = 0.01  # 最小波动率（避免死市）
+    min_volatility: float = 0.0   # 最小波动率（Polymarket 数据源不提供 change_24h，设为 0 跳过死市检查）
 
     # 评分阈值
     min_entry_score: float = 0.6  # 最小入场评分
@@ -289,8 +289,8 @@ class EntryConditionValidator:
                     threshold=self.config.min_liquidity,
                 )
 
-            # 检查订单簿深度
-            if total_depth < self.config.min_order_book_depth:
+            # 检查订单簿深度（如果 depth=0 则无数据，跳过检查而非失败）
+            if total_depth > 0 and total_depth < self.config.min_order_book_depth:
                 return EntryCheckDetail(
                     check_name="liquidity",
                     result=EntryCheckResult.FAILED_LIQUIDITY,
@@ -321,13 +321,17 @@ class EntryConditionValidator:
             )
 
     def _check_expiry(self, market_id: str) -> EntryCheckDetail:
-        """检查到期时间"""
+        """检查到期时间。
+
+        默认不再拦截（所有字段为 None 时直接通过）。
+        如需使用，请在构造 EntryConditionConfig 时显式传入时间限制。
+        否则由上层 ExpiryPolicy 做统一时间判断。
+        """
         try:
             # 获取市场到期时间
             expiry = self.market_source.get_market_expiry(market_id)
 
             if expiry is None:
-                # 没有到期时间（永续市场）
                 return EntryCheckDetail(
                     check_name="expiry",
                     result=EntryCheckResult.PASSED,
@@ -338,8 +342,21 @@ class EntryConditionValidator:
             now = datetime.now()
             time_to_expiry = expiry - now
 
+            # 如果配置为 None，跳过所有时间拦截（由 ExpiryPolicy 统一处理）
+            if self.config.avoid_expiry_within is None and \
+               self.config.min_time_to_expiry is None and \
+               self.config.max_time_to_expiry is None:
+                return EntryCheckDetail(
+                    check_name="expiry",
+                    result=EntryCheckResult.PASSED,
+                    passed=True,
+                    message="Expiry check skipped (delegated to ExpiryPolicy)",
+                    value=time_to_expiry,
+                )
+
             # 检查是否即将到期（应避免）
-            if time_to_expiry < self.config.avoid_expiry_within:
+            if self.config.avoid_expiry_within is not None and \
+               time_to_expiry < self.config.avoid_expiry_within:
                 return EntryCheckDetail(
                     check_name="expiry",
                     result=EntryCheckResult.FAILED_EXPIRY,
@@ -350,7 +367,8 @@ class EntryConditionValidator:
                 )
 
             # 检查最小到期时间
-            if time_to_expiry < self.config.min_time_to_expiry:
+            if self.config.min_time_to_expiry is not None and \
+               time_to_expiry < self.config.min_time_to_expiry:
                 return EntryCheckDetail(
                     check_name="expiry",
                     result=EntryCheckResult.FAILED_EXPIRY,
@@ -361,7 +379,8 @@ class EntryConditionValidator:
                 )
 
             # 检查最大到期时间（避免过长）
-            if time_to_expiry > self.config.max_time_to_expiry:
+            if self.config.max_time_to_expiry is not None and \
+               time_to_expiry > self.config.max_time_to_expiry:
                 return EntryCheckDetail(
                     check_name="expiry",
                     result=EntryCheckResult.FAILED_EXPIRY,

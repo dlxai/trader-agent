@@ -46,7 +46,7 @@ class OddsBiasMetrics:
 
     def is_favorable(self, min_edge: float = 0.05) -> bool:
         """检查赔率是否有利"""
-        return self.edge >= min_edge and self.confidence >= 0.6
+        return self.edge >= min_edge and self.confidence >= 0.5
 
 
 @dataclass
@@ -87,7 +87,7 @@ class CapitalFlowMetrics:
 
     def is_smart_money_buying(self, threshold: float = 0.5) -> bool:
         """检查聪明钱是否在买入"""
-        return self.smart_money_flow > threshold and self.flow_strength >= 0.6
+        return self.smart_money_flow > threshold and self.flow_strength >= 0.3
 
 
 @dataclass
@@ -102,6 +102,19 @@ class InformationEdgeMetrics:
     def has_edge(self, threshold: float = 0.6) -> bool:
         """检查是否有信息优势"""
         return self.composite_score >= threshold
+
+
+@dataclass
+class SportsMomentumMetrics:
+    """体育比赛动量指标"""
+    score_diff: int  # 比分差距
+    time_remaining: int  # 剩余时间（分钟）
+    game_status: str  # 比赛状态
+    momentum_score: float  # 动量分数 0-1
+    event_strength: str  # 事件强度 "strong" | "moderate" | "weak"
+
+    def is_strong_momentum(self) -> bool:
+        return self.event_strength == "strong" and self.momentum_score >= 0.7
 
 
 @dataclass
@@ -121,6 +134,7 @@ class MarketContext:
     orderbook_pressure: Optional[OrderbookPressureMetrics] = None
     capital_flow: Optional[CapitalFlowMetrics] = None
     information_edge: Optional[InformationEdgeMetrics] = None
+    sports_momentum: Optional[SportsMomentumMetrics] = None
 
 
 @dataclass
@@ -166,7 +180,6 @@ class BuyStrategyConfig:
 
     # 时间衰减权重
     time_decay_weight: float = 0.15
-    max_time_to_expiry_days: int = 30
 
     # 订单簿压力权重
     orderbook_weight: float = 0.20
@@ -177,8 +190,12 @@ class BuyStrategyConfig:
     min_smart_money_threshold: float = 0.5
 
     # 信息优势权重
-    information_edge_weight: float = 0.20
+    information_edge_weight: float = 0.10
     min_information_score: float = 0.6
+
+    # 体育动量权重
+    sports_momentum_weight: float = 0.15
+    min_sports_momentum_score: float = 0.5
 
     # 决策阈值
     strong_buy_threshold: float = 0.80
@@ -206,6 +223,7 @@ class BuyStrategy:
     3. 订单簿压力 (orderbook_pressure) - 买卖盘不平衡
     4. 资金流向 (capital_flow) - 聪明钱动向
     5. 信息优势 (information_edge) - 价格-成交量背离
+    6. 体育动量 (sports_momentum) - 实时比分驱动的动量信号
 
     风险检查：
     - 死亡区间检查 ($0.60-$0.85 不交易)
@@ -240,6 +258,7 @@ class BuyStrategy:
             'orderbook': self.config.orderbook_weight,
             'capital_flow': self.config.capital_flow_weight,
             'information_edge': self.config.information_edge_weight,
+            'sports_momentum': self.config.sports_momentum_weight,
         }
 
         # 权重归一化
@@ -402,6 +421,9 @@ class BuyStrategy:
         if context.information_edge:
             scores['information_edge'] = self._evaluate_information_edge(context.information_edge)
 
+        if context.sports_momentum:
+            scores['sports_momentum'] = self._evaluate_sports_momentum(context.sports_momentum)
+
         return scores
 
     async def _call_signal_generator(self, generator: SignalGenerator, context: MarketContext) -> Tuple[SignalStrength, float, str]:
@@ -415,63 +437,65 @@ class BuyStrategy:
 
     def _evaluate_odds_bias(self, metrics: OddsBiasMetrics) -> float:
         """评估赔率偏向分数"""
-        if not metrics.is_favorable(self.config.min_odds_edge):
-            return 0.0
-
         # 基于edge和confidence计算分数
-        edge_score = min(1.0, metrics.edge / 0.15)  # 假设15% edge为满分
+        edge_score = min(1.0, metrics.edge / 0.05)  # 5% edge为满分
         confidence_score = metrics.confidence
-
-        return edge_score * confidence_score
+        base = edge_score * confidence_score
+        if not metrics.is_favorable(self.config.min_odds_edge):
+            return base * 0.5  # 未达标时减半，而非归零
+        return base
 
     def _evaluate_time_decay(self, metrics: TimeDecayMetrics) -> float:
-        """评估时间衰减分数"""
-        max_days = self.config.max_time_to_expiry_days
+        """评估时间衰减分数。
+
+        此处只做平滑评分，不做硬拦截。
+        时间拦截由上层 ExpiryPolicy 统一处理。
+        """
         days_to_expiry = metrics.time_to_expiry.total_seconds() / 86400
 
         if days_to_expiry <= 0:
             return 0.0  # 已过期
 
-        if days_to_expiry > max_days:
-            return 0.3  # 时间太长，不确定性高
-
-        # 最优区间：3-14天
-        if 3 <= days_to_expiry <= 14:
-            urgency_bonus = 1.0 if metrics.urgency_score > 0.5 else 0.8
-            return urgency_bonus
-
-        # 其他情况线性递减
-        return 0.5 + 0.5 * (1 - days_to_expiry / max_days)
+        # 基于 urgency_score 和剩余天数做平滑评分
+        urgency = metrics.urgency_score  # 0.0 ~ 1.0
+        # 将天数映射到 0-1（假设30天为参考上限）
+        days_norm = min(1.0, days_to_expiry / 30.0)
+        # urgency 越高（临近到期），评分越高；但天数太少会衰减
+        if days_to_expiry < 0.5:  # 不到12小时
+            return 0.3 + urgency * 0.4
+        elif days_to_expiry <= 3:
+            return 0.5 + urgency * 0.4
+        else:
+            return 0.6 + urgency * 0.2 * (1.0 - days_norm * 0.5)
 
     def _evaluate_orderbook(self, metrics: OrderbookPressureMetrics) -> float:
         """评估订单簿压力分数"""
-        # 检查买盘压力
-        if not metrics.is_buying_pressure(self.config.min_imbalance_ratio):
-            return 0.2  # 没有买盘优势
-
         # 基于不平衡程度评分
         imbalance_score = (metrics.imbalance_ratio + 1) / 2  # 归一化到0-1
 
         # 考虑价格冲击
         impact_penalty = 1.0 - min(1.0, metrics.price_impact / 0.02)  # 2%冲击为上限
 
-        return imbalance_score * impact_penalty
+        base = imbalance_score * impact_penalty
+        if not metrics.is_buying_pressure(self.config.min_imbalance_ratio):
+            return base * 0.5  # 未达标时减半
+        return base
 
     def _evaluate_capital_flow(self, metrics: CapitalFlowMetrics) -> float:
         """评估资金流向分数"""
-        if not metrics.is_smart_money_buying(self.config.min_smart_money_threshold):
-            return 0.2
-
         # 聪明钱流向评分
         smart_score = (metrics.smart_money_flow + 1) / 2
 
         # 趋势一致性加分
         alignment_bonus = (metrics.trend_alignment + 1) / 2
 
-        # 流向强度
-        strength_factor = metrics.flow_strength
+        # 流向强度（保底0.2避免归零）
+        strength_factor = max(0.2, metrics.flow_strength)
 
-        return smart_score * (0.6 + 0.4 * alignment_bonus) * strength_factor
+        base = smart_score * (0.6 + 0.4 * alignment_bonus) * strength_factor
+        if not metrics.is_smart_money_buying(self.config.min_smart_money_threshold):
+            return base * 0.5  # 未达标时减半
+        return base
 
     def _evaluate_information_edge(self, metrics: InformationEdgeMetrics) -> float:
         """评估信息优势分数"""
@@ -486,6 +510,30 @@ class BuyStrategy:
 
         final_score = base_score + anomaly_bonus + alignment_bonus
         return min(1.0, final_score)
+
+    def _evaluate_sports_momentum(self, metrics: SportsMomentumMetrics) -> float:
+        """评估体育动量分数"""
+        if metrics.event_strength == "strong":
+            base = 0.9
+        elif metrics.event_strength == "moderate":
+            base = 0.6
+        else:
+            base = 0.3
+
+        # 时间衰减：比赛越接近尾声，信号越确定
+        # Note: time_remaining may be inaccurate (e.g., extra time not included)
+        time_factor = 1.0
+        if metrics.time_remaining <= 15:
+            time_factor = 1.0
+        elif metrics.time_remaining <= 30:
+            time_factor = 0.85
+        else:
+            time_factor = 0.7
+
+        # 比分差距越大，确定性越高
+        lead_factor = min(1.0, 0.3 + metrics.score_diff * 0.2)
+
+        return base * time_factor * lead_factor
 
     def _calculate_composite_score(self,
                                    signal_scores: Dict[str, float],
@@ -666,6 +714,13 @@ class BuyStrategy:
             ies = context.information_edge.composite_score
             reasoning.append(f"Information edge: {ies:.2f} (unusual activity: {context.information_edge.unusual_activity_score:.2f})")
 
+        if context.sports_momentum:
+            sms = context.sports_momentum.momentum_score
+            reasoning.append(
+                f"Sports momentum: {sms:.2f} ({context.sports_momentum.event_strength}, "
+                f"score_diff={context.sports_momentum.score_diff}, remaining={context.sports_momentum.time_remaining}m)"
+            )
+
         # 添加信号分数摘要
         if signal_scores:
             top_signals = sorted(signal_scores.items(), key=lambda x: x[1], reverse=True)[:3]
@@ -710,6 +765,7 @@ class BuyStrategy:
             'orderbook': new_config.orderbook_weight,
             'capital_flow': new_config.capital_flow_weight,
             'information_edge': new_config.information_edge_weight,
+            'sports_momentum': new_config.sports_momentum_weight,
         }
 
         # 权重归一化

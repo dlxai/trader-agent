@@ -23,7 +23,7 @@ WebSocket Activity 综合分析器
 import logging
 import time
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 from dataclasses import dataclass, field
 import statistics
 
@@ -92,6 +92,7 @@ class MarketActivity:
     condition_id: str
     slug: str
     question: str
+    token_id: Optional[str] = None
 
     # 基础统计
     total_trades: int = 0
@@ -109,7 +110,43 @@ class MarketActivity:
     # 时间跟踪
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
-    recent_trades: deque = field(default_factory=lambda: deque(maxlen=50))
+    recent_trades: deque = field(default_factory=lambda: deque(maxlen=500))
+
+    def _is_yes_outcome(self, outcome: str) -> bool:
+        """判断 outcome 是否为 YES/Up 方向（支持多种市场类型）。"""
+        return outcome.lower() in ("yes", "y", "up")
+
+    def _is_no_outcome(self, outcome: str) -> bool:
+        """判断 outcome 是否为 NO/Down 方向（支持多种市场类型）。"""
+        return outcome.lower() in ("no", "n", "down")
+
+    def get_window_metrics(self, seconds: int = 60) -> Optional[Dict[str, Any]]:
+        """Return time-windowed metrics from recent_trades.
+
+        Args:
+            seconds: Time window in seconds (default 60).
+
+        Returns:
+            Dict with net_flow, yes_volume, no_volume, trader_count, total_trades,
+            or None if no trades in window.
+        """
+        now = time.time()
+        cutoff = now - seconds
+        trades = [t for t in self.recent_trades if t.get("time", 0) >= cutoff]
+        if not trades:
+            return None
+
+        unique_traders = set(t["trader"] for t in trades if t.get("trader"))
+        yes_vol = sum(t["amount"] for t in trades if self._is_yes_outcome(t.get("outcome", "")))
+        no_vol = sum(t["amount"] for t in trades if self._is_no_outcome(t.get("outcome", "")))
+
+        return {
+            "net_flow": yes_vol - no_vol,
+            "yes_volume": yes_vol,
+            "no_volume": no_vol,
+            "trader_count": len(unique_traders),
+            "total_trades": len(trades),
+        }
 
     # 热度评分
     activity_score: float = 0.0
@@ -164,9 +201,12 @@ class MarketActivity:
         outcome = trade.get("outcome", "YES")
 
         self.total_volume += amount
-        if outcome == "YES":
+        if self._is_yes_outcome(outcome):
             self.yes_volume += amount
+        elif self._is_no_outcome(outcome):
+            self.no_volume += amount
         else:
+            # Unknown outcome: count as no_volume for net_flow calculation
             self.no_volume += amount
 
         price = trade.get("price", 0.5)
@@ -263,6 +303,14 @@ class ActivityAnalyzer:
         # 回调
         self._anomaly_callbacks = []
         self._hot_market_callbacks = []
+        self._dual_window_callbacks = []
+
+        # 双窗口触发配置
+        self._dual_window_short = 60
+        self._dual_window_long = 300
+        self._dual_window_min_netflow = 10.0
+        self._dual_window_cooldown = 10.0
+        self._last_dual_window_trigger: Dict[str, float] = {}
 
         logger.info("[ActivityAnalyzer] 初始化完成")
 
@@ -306,13 +354,26 @@ class ActivityAnalyzer:
                 except:
                     pass
 
-        # 4. 检测市场热度变化
-        if market_activity and market_activity.activity_score > 0.7:
-            for callback in self._hot_market_callbacks:
-                try:
-                    callback(market_activity)
-                except:
-                    pass
+        # 4. 检测显著资金流（60s 窗口净流 >= 10，不依赖 unique_traders）
+        if market_activity:
+            window = market_activity.get_window_metrics(60)
+            if window and abs(window["net_flow"]) >= 10:
+                # 冷却 10 秒避免同一市场频繁触发
+                now = time.time()
+                last = getattr(self, '_last_hot_trigger', {}).get(condition_id, 0)
+                if now - last >= 10:
+                    if not hasattr(self, '_last_hot_trigger'):
+                        self._last_hot_trigger = {}
+                    self._last_hot_trigger[condition_id] = now
+                    window["event_time"] = now
+                    for callback in self._hot_market_callbacks:
+                        try:
+                            callback(condition_id, window)
+                        except:
+                            pass
+
+        # 5. 检测双窗口触发（已废弃，保留代码但不再被 strategy_runner 使用）
+        self._check_dual_window_trigger(condition_id)
 
         return anomaly
 
@@ -348,7 +409,12 @@ class ActivityAnalyzer:
                 condition_id=condition_id,
                 slug=trade.get("slug", ""),
                 question=trade.get("title", ""),
+                token_id=trade.get("asset_id") or trade.get("token_id"),
             )
+        else:
+            # 补充 token_id 如果之前没有
+            if not self.markets[condition_id].token_id and (trade.get("asset_id") or trade.get("token_id")):
+                self.markets[condition_id].token_id = trade.get("asset_id") or trade.get("token_id")
 
         self.markets[condition_id].add_trade(trade)
         return self.markets[condition_id]
@@ -469,6 +535,13 @@ class ActivityAnalyzer:
         """获取指定市场的活动数据"""
         return self.markets.get(condition_id)
 
+    def get_market_window(self, condition_id: str, seconds: int = 60) -> Optional[Dict[str, Any]]:
+        """获取指定市场的滑动时间窗口聚合数据."""
+        market = self.markets.get(condition_id)
+        if market:
+            return market.get_window_metrics(seconds)
+        return None
+
     def get_trader_by_address(self, address: str) -> Optional[TraderProfile]:
         """获取指定交易员的画像"""
         return self.traders.get(address)
@@ -505,6 +578,64 @@ class ActivityAnalyzer:
     def on_hot_market(self, callback):
         """注册热门市场回调"""
         self._hot_market_callbacks.append(callback)
+
+    def on_dual_window_trigger(self, callback):
+        """注册双窗口确认触发回调"""
+        self._dual_window_callbacks.append(callback)
+
+    # ========================================================================
+    # 双窗口触发检测
+    # ========================================================================
+
+    def _check_dual_window_trigger(self, condition_id: str):
+        """检测双窗口确认条件并触发回调。"""
+        if not self._dual_window_callbacks:
+            return
+
+        now = time.time()
+        last = self._last_dual_window_trigger.get(condition_id, 0)
+        if now - last < self._dual_window_cooldown:
+            return
+
+        short_data = self.get_market_window(condition_id, self._dual_window_short)
+        long_data = self.get_market_window(condition_id, self._dual_window_long)
+        if not short_data or not long_data:
+            return
+
+        short_nf = short_data.get("net_flow", 0)
+        long_nf = long_data.get("net_flow", 0)
+        if abs(short_nf) < self._dual_window_min_netflow:
+            return
+
+        market = self.markets.get(condition_id)
+        short_prices = [
+            t["price"]
+            for t in (market.recent_trades if market else [])
+            if now - t["time"] <= self._dual_window_short
+        ]
+        long_prices = [
+            t["price"]
+            for t in (market.recent_trades if market else [])
+            if now - t["time"] <= self._dual_window_long
+        ]
+
+        trigger_data = {
+            "short_window": {
+                **short_data,
+                "avg_price": statistics.mean(short_prices) if short_prices else 0.5,
+            },
+            "long_window": {
+                **long_data,
+                "avg_price": statistics.mean(long_prices) if long_prices else 0.5,
+            },
+        }
+
+        self._last_dual_window_trigger[condition_id] = now
+        for callback in self._dual_window_callbacks:
+            try:
+                callback(condition_id, trigger_data)
+            except Exception:
+                pass
 
     # ========================================================================
     # 统计与调试

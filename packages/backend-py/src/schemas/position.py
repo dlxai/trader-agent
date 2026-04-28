@@ -133,6 +133,8 @@ class PositionSummaryResponse(BaseSchema):
     opened_at: datetime
     leverage: Decimal
     market_name: Optional[str] = None
+    title: Optional[str] = None
+    outcome: Optional[str] = None
     portfolio: Optional[PortfolioMini] = None
 
 

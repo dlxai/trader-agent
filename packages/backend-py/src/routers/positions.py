@@ -52,6 +52,25 @@ async def verify_portfolio_access(
     return portfolio
 
 
+async def _fetch_market_title(market_id: str) -> str:
+    """Fetch market title from Gamma API when data-api doesn't provide one."""
+    if not market_id or not market_id.startswith("0x"):
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"condition_ids": market_id},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list) and len(data) > 0:
+                return data[0].get("question") or data[0].get("title") or ""
+    except Exception:
+        pass
+    return ""
+
+
 @router.post(
     "",
     response_model=ApiResponse[PositionResponse],
@@ -187,6 +206,8 @@ async def list_positions(
                 opened_at=p.opened_at,
                 leverage=p.leverage,
                 market_name=(p.position_metadata or {}).get("market_name") or p.symbol,
+                title=(p.position_metadata or {}).get("title") or p.symbol,
+                outcome=(p.position_metadata or {}).get("outcome") or p.side,
                 portfolio=portfolio_mini,
             )
         )
@@ -463,10 +484,12 @@ async def sync_positions_from_chain(
             market_id = p.get("conditionId") or p.get("marketId") or ""
             title = p.get("title") or p.get("question") or p.get("marketName") or p.get("market") or ""
             outcome = p.get("outcome") or p.get("position") or ""
-            side_raw = (p.get("side") or "BUY").lower()
-            side = "yes" if side_raw in ("buy", "BUY") else "no"
-            avg_price = float(p.get("avgCost") or p.get("avgPrice") or p.get("avg_cost") or 0.5)
-            unrealized_pnl = float(p.get("unrealizedPnl") or p.get("unrealized_pnl") or 0)
+            # data-api has no "side" field; derive from outcome
+            side = "yes" if outcome.lower() == "yes" else "no"
+            avg_price = float(p.get("avgPrice") or p.get("avgCost") or p.get("avg_cost") or 0.5)
+            cur_price = float(p.get("curPrice") or 0)
+            cash_pnl = float(p.get("cashPnl") or p.get("unrealizedPnl") or p.get("unrealized_pnl") or 0)
+            percent_pnl = float(p.get("percentPnl") or p.get("percentPnl") or 0)
 
             onchain_list.append({
                 "token_id": token_id,
@@ -476,7 +499,9 @@ async def sync_positions_from_chain(
                 "side": side,
                 "size": Decimal(str(size)),
                 "avg_price": avg_price,
-                "unrealized_pnl": unrealized_pnl,
+                "cur_price": cur_price,
+                "unrealized_pnl": cash_pnl,
+                "pnl_percent": percent_pnl,
             })
 
         synced_count = 0
@@ -494,19 +519,30 @@ async def sync_positions_from_chain(
             market_id = ocp["market_id"] or ocp["token_id"]
             onchain_keys.add(market_id)
 
-            display_name = ocp["title"] or ocp["outcome"] or market_id[:50]
+            title = ocp["title"]
+            if not title:
+                title = await _fetch_market_title(market_id)
+            display_name = title or ocp["outcome"] or market_id[:50]
             avg_price = Decimal(str(ocp["avg_price"]))
             size = ocp["size"]
             unrealized = Decimal(str(ocp["unrealized_pnl"]))
-            if size > 0:
-                current_price = avg_price + (unrealized / size)
+            # Use curPrice from data-api if available; otherwise derive
+            if ocp.get("cur_price"):
+                current_price = Decimal(str(ocp["cur_price"]))
             else:
-                current_price = avg_price
-            cost_basis = avg_price * size
-            if cost_basis > 0:
-                pnl_percent = (unrealized / cost_basis) * Decimal("100")
+                if size > 0:
+                    current_price = avg_price + (unrealized / size)
+                else:
+                    current_price = avg_price
+            # Use percentPnl from data-api if available; otherwise compute
+            if ocp.get("pnl_percent"):
+                pnl_percent = Decimal(str(ocp["pnl_percent"]))
             else:
-                pnl_percent = Decimal("0")
+                cost_basis = avg_price * size
+                if cost_basis > 0:
+                    pnl_percent = (unrealized / cost_basis) * Decimal("100")
+                else:
+                    pnl_percent = Decimal("0")
 
             if market_id in local_positions:
                 local_pos = local_positions[market_id]
@@ -523,6 +559,8 @@ async def sync_positions_from_chain(
                     local_pos.symbol = display_name
                     meta = local_pos.position_metadata or {}
                     meta["market_name"] = display_name
+                    meta["title"] = title or display_name
+                    meta["outcome"] = ocp.get("outcome") or local_pos.side
                     local_pos.position_metadata = meta
                 synced_count += 1
             else:
@@ -549,6 +587,8 @@ async def sync_positions_from_chain(
                         "token_id": ocp["token_id"],
                         "chain_updated_at": str(datetime.utcnow()),
                         "market_name": display_name,
+                        "title": title or display_name,
+                        "outcome": ocp.get("outcome") or ocp["side"],
                     },
                 )
                 db.add(new_position)

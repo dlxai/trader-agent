@@ -148,7 +148,7 @@ export default function SignalsPage() {
     queryFn: () => signalsApi.getAll({ page, pageSize: 12 }),
   })
 
-  const signals = signalsResponse?.items || []
+  const signals = (signalsResponse?.items || []).filter((s) => s.signal_type === 'buy')
 
   if (isLoading) {
     return <LoadingScreen />
@@ -165,7 +165,7 @@ export default function SignalsPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500/10">
@@ -173,22 +173,7 @@ export default function SignalsPage() {
             </div>
             <div>
               <p className="text-xs text-muted-foreground">买入信号</p>
-              <p className="text-xl font-bold">
-                {signals.filter(s => s.signal_type === 'buy').length}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
-              <TrendingDown className="h-5 w-5 text-red-500" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">卖出信号</p>
-              <p className="text-xl font-bold">
-                {signals.filter(s => s.signal_type === 'sell').length}
-              </p>
+              <p className="text-xl font-bold">{signals.length}</p>
             </div>
           </CardContent>
         </Card>
@@ -211,8 +196,8 @@ export default function SignalsPage() {
               <Brain className="h-5 w-5 text-purple-500" />
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">总信号数</p>
-              <p className="text-xl font-bold">{signalsResponse?.total || 0}</p>
+              <p className="text-xs text-muted-foreground">总买入信号</p>
+              <p className="text-xl font-bold">{signals.length}</p>
             </div>
           </CardContent>
         </Card>

@@ -478,10 +478,13 @@ export interface StrategySummary {
   type: string;
   is_active: boolean;
   status: string;
+  portfolio_id?: string;
+  provider_id?: string;
   min_order_size: number;
   max_order_size: number;
   total_trades: number;
   total_pnl: number;
+  total_pnl_percent?: number;
 }
 
 // Signal types (新增)
@@ -545,8 +548,10 @@ export interface StrategyFilters {
   dead_zone_max: number;
   keywords_exclude: string[];
 
-  // 到期时间过滤：超过这个小时数的市场不交易（-1表示不限制）
-  max_hours_to_expiry: number;
+  // 到期时间策略（由 ExpiryPolicy 统一处理）
+  min_hours_to_expiry: number;
+  max_days_to_expiry: number;
+  avoid_last_minutes_before_expiry: number;
 }
 
 // 持仓监控

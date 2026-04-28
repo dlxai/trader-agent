@@ -194,8 +194,16 @@ function CreateWalletDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!name.trim()) {
+      toast({ title: 'Wallet name is required', variant: 'destructive' })
+      return
+    }
+    if (!privateKey.trim()) {
+      toast({ title: 'Private key is required', variant: 'destructive' })
+      return
+    }
     createMutation.mutate({
-      name,
+      name: name.trim(),
       private_key: privateKey,
       proxy_wallet_address: proxyWalletAddress || undefined,
       is_default: isDefault,

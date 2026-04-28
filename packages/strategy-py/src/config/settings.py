@@ -41,6 +41,10 @@ class StopLossConfig:
         {"min": 0.60, "max": 0.85, "reason": "dead_zone_high_volatility"},
     ])
 
+    # 死亡区间便捷属性（唯一真相源，与 no_trade_zones 保持一致）
+    death_zone_min: float = 0.60
+    death_zone_max: float = 0.85
+
     # 高价止盈阈值
     high_price_exit_threshold: float = 0.999  # 价格 >= 0.999 时触发高价止盈
 

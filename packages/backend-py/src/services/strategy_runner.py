@@ -217,6 +217,9 @@ class StrategyRunner:
         # Provider cache to avoid repeated DB queries for AI analysis
         self._provider_cache: Dict[UUID, Optional[dict]] = {}
 
+        # Run-once requests from API (supervisor pushes, loop consumes)
+        self._run_once_requests: set[UUID] = set()
+
         # Concurrency control to avoid starving the event loop
         self._eval_semaphore = asyncio.Semaphore(15)
         self._ai_semaphore = asyncio.Semaphore(3)  # limit AI API concurrency
@@ -635,21 +638,21 @@ class StrategyRunner:
                     )
                 else:
                     try:
-                        from py_clob_client.client import ClobClient
+                        from py_clob_client_v2 import ClobClient
 
                         kwargs = {
                             "host": "https://clob.polymarket.com",
-                            "key": private_key,
                             "chain_id": 137,
+                            "key": private_key,
                         }
                         if proxy:
                             kwargs["signature_type"] = 2
                             kwargs["funder"] = proxy
 
                         self.clob_client = ClobClient(**kwargs)
-                        api_creds = self.clob_client.create_or_derive_api_creds()
-                        self.clob_client.set_api_creds(api_creds)
-                        logger.info("Strategy %s: ClobClient initialized successfully", strategy_id)
+                        creds = self.clob_client.create_or_derive_api_key()
+                        self.clob_client.set_api_creds(creds)
+                        logger.info("Strategy %s: ClobClient v2 initialized successfully", strategy_id)
                     except Exception as e:
                         logger.error("Strategy %s: Failed to initialize ClobClient: %s", strategy_id, e)
                         raise
@@ -695,6 +698,10 @@ class StrategyRunner:
 
         logger.info("Strategy %s: stopped", strategy_id)
 
+    def request_run_once(self, strategy_id: UUID) -> None:
+        """Run-once is disabled in event-driven mode; signals only come from WebSocket events."""
+        logger.info("Strategy %s: run-once ignored (event-driven mode)", strategy_id)
+
     async def _run_strategy_loop(self, strategy_id: UUID, data_source: DataSource) -> None:
         """Main strategy execution loop."""
         try:
@@ -709,9 +716,9 @@ class StrategyRunner:
                 logger.warning("Strategy %s: not found in DB, exiting loop", strategy_id)
                 return
 
-            interval = 60  # Fixed 60s loop: lightweight health check only
+            interval = 60  # 1min loop: position sync + subscribe only, no polling scan
             iteration = 0
-            strategy_exec_logger.info("[START] Strategy %s (%s) loop started, interval=%ds, is_active=%s, is_paused=%s",
+            strategy_exec_logger.info("[START] Strategy %s (%s) loop started, interval=%ds, is_active=%s, is_paused=%s (event-driven only)",
                                       strategy_id, strategy.name, interval, strategy.is_active, strategy.is_paused)
 
             # Warm-up (with its own session)
@@ -757,7 +764,7 @@ class StrategyRunner:
                     continue
 
                 iteration += 1
-                strategy_exec_logger.info("[ITER] %d started for strategy %s (event-driven, no polling scan)", iteration, strategy_id)
+                strategy_exec_logger.info("[ITER] %d started for strategy %s (event-driven only, no polling)", iteration, strategy_id)
 
                 # Refresh market cache every 10 minutes
                 if (
@@ -772,30 +779,30 @@ class StrategyRunner:
                 else:
                     try:
                         async with AsyncSessionLocal() as db:
-                            # 1. Sync on-chain positions from proxy wallet
-                            onchain_positions = await self._sync_onchain_positions(db, strategy)
-                            strategy_exec_logger.info("[ITER] synced %d on-chain positions", len(onchain_positions))
-
-                            # 2. Subscribe WebSocket for on-chain positions
-                            if onchain_positions:
-                                onchain_token_ids = [p["token_id"] for p in onchain_positions if p.get("token_id")]
-                                if onchain_token_ids and hasattr(data_source, "subscribe"):
+                            # Subscribe WebSocket for open positions (read from DB, do NOT sync from chain here)
+                            result = await db.execute(
+                                select(Position).where(
+                                    Position.strategy_id == strategy_id,
+                                    Position.status == "open",
+                                    Position.token_id.isnot(None),
+                                )
+                            )
+                            open_positions = result.scalars().all()
+                            if open_positions:
+                                token_ids = [p.token_id for p in open_positions if p.token_id]
+                                if token_ids and hasattr(data_source, "subscribe"):
                                     try:
-                                        await data_source.subscribe(onchain_token_ids)
+                                        await data_source.subscribe(token_ids)
                                     except Exception as e:
                                         strategy_exec_logger.warning("[ITER] subscribe failed: %s", e)
+                                strategy_exec_logger.info("[ITER] subscribed %d open position tokens", len(token_ids))
 
-                            # 3. Position monitoring is handled by position_monitor independently
-                            #    Strategy signal discovery is now event-driven via hot market callbacks.
-
-                            strategy.last_run_at = datetime.utcnow()
-                            strategy.total_runs += 1
                             await db.commit()
                     except Exception as e:
                         strategy_exec_logger.error("[ITER] %d error: %s\n%s", iteration, e, traceback.format_exc())
 
                 self._log_summary()
-                strategy_exec_logger.info("[SLEEP] sleeping %ds (position sync only)", interval)
+                strategy_exec_logger.info("[SLEEP] sleeping %ds (event-driven only)", interval)
                 for handler in strategy_exec_logger.handlers:
                     handler.flush()
                 await asyncio.sleep(interval)
@@ -935,22 +942,38 @@ class StrategyRunner:
                     tokens.append({"token_id": ws_no_tid, "outcome": "No"})
                 # Try to get real metadata from cache first
                 cached_market = self._market_cache.get(condition_id)
+                # Get real-time stats from WebSocket activity feed
+                ws_stats = None
+                if hasattr(data_source, "get_market_stats"):
+                    ws_stats = data_source.get_market_stats(condition_id)
+
+                question = (ws_meta.get("question") if ws_meta else None) or (ws_stats.get("question") if ws_stats else None) or (cached_market.get("question") if cached_market else None) or "Unknown"
+                slug = (ws_meta.get("slug") if ws_meta else None) or (ws_stats.get("slug") if ws_stats else None) or (cached_market.get("slug") if cached_market else None) or ""
                 market = {
                     "conditionId": condition_id,
                     "condition_id": condition_id,
                     "id": condition_id,
                     "tokens": tokens,
-                    "question": (ws_meta.get("question") if ws_meta else None) or (cached_market.get("question") if cached_market else None) or "Unknown",
-                    "slug": (ws_meta.get("slug") if ws_meta else None) or (cached_market.get("slug") if cached_market else None) or "",
-                    "liquidity": float(cached_market.get("liquidity", 0)) if cached_market else 5000.0,
-                    "volume": float(cached_market.get("volume", 0)) if cached_market else 1000.0,
+                    "question": question,
+                    "slug": slug,
+                    "symbol": question if question != "Unknown" else (slug or condition_id[:20]),
+                    "liquidity": float(cached_market.get("liquidity", 0)) if cached_market else (ws_stats.get("total_volume", 5000.0) if ws_stats else 5000.0),
+                    "volume": float(cached_market.get("volume", 0)) if cached_market else (ws_stats.get("total_volume", 1000.0) if ws_stats else 1000.0),
+                    "volume24hr": (ws_stats.get("total_volume", 0) if ws_stats else 0),
                     "endDate": cached_market.get("endDate") if cached_market else None,
+                    # Preserve activity stats for factor evaluation
+                    "_ws_stats": ws_stats,
                 }
                 if side == "yes":
                     token_id = ws_yes_tid
                 else:
                     token_id = ws_no_tid
-                strategy_exec_logger.info("[EVAL] recovered market %s from WebSocket feed tokens=%s", condition_id, tokens)
+                # Register token -> condition mapping so get_activity works
+                if token_id:
+                    self._token_to_condition[token_id] = condition_id
+                    if hasattr(data_source, "_token_to_condition"):
+                        data_source._token_to_condition[token_id] = condition_id
+                strategy_exec_logger.info("[EVAL] recovered market %s from WebSocket feed tokens=%s stats=%s", condition_id, tokens, "yes" if ws_stats else "no")
 
         # 2c. Last resort: broken Gamma API fallback (kept for rare cases, usually fails for hex ids)
         if not market or not token_id:
@@ -1153,7 +1176,7 @@ class StrategyRunner:
             risk_manager=None,
             config=buy_config,
         )
-        context = self._build_market_context(market, filter_md, activity_data, data_source, token_id)
+        context = self._build_market_context(market, filter_md, activity_data, data_source, token_id, side=side)
         factor_output = await buy_strategy.evaluate(context)
 
         if factor_output.decision in (BuyDecision.PASS, BuyDecision.BLOCKED):
@@ -1165,21 +1188,25 @@ class StrategyRunner:
                 factor_output.reasoning,
             )
             return None
+
+        # 9a. Sports market gate: must have live score data
+        if self._is_sports_market(market) and context.sports_momentum is None:
+            strategy_exec_logger.info("[EVAL] sports market %s has no live score, rejecting", condition_id)
+            return None
+
         t5 = time.time()
 
         # 9. AI analysis (Tier 7) — single market, no need for top-N
         market["_triggered"] = True
         market["_side"] = side
+        market["_token_id"] = token_id
         short_avg = trigger_data.get("short_window", {}).get("avg_price", eval_price)
         market["_price_change"] = (
             abs(short_avg - eval_price) / eval_price * 100
             if eval_price > 0 else 0
         )
         market["_netflow"] = trigger_data.get("short_window", {}).get("net_flow", 0)
-        market["_factor_score"] = (
-            sum(factor_output.signal_scores.values()) / len(factor_output.signal_scores)
-            if factor_output.signal_scores else 0
-        )
+        market["_factor_score"] = factor_output.composite_score
         market["_factor_decision"] = factor_output.decision.value
         market["_factor_confidence"] = factor_output.confidence
         market["_factor_stop_loss"] = factor_output.stop_loss
@@ -1275,7 +1302,7 @@ class StrategyRunner:
                 strategy_exec_logger.info("[EVAL] rejected: duplicate position %s %s", market_id, side)
                 return signal_log
 
-            await self._execute_order(db, strategy, signal_log)
+            await self._execute_order(db, strategy, signal_log, data_source)
 
         total_time = time.time() - _eval_start
         strategy_exec_logger.info(
@@ -1511,7 +1538,7 @@ class StrategyRunner:
             stats["passed"] += 1
 
             # === Factor Evaluation ===
-            context = self._build_market_context(market, filter_md, activity_data, data_source, token_id)
+            context = self._build_market_context(market, filter_md, activity_data, data_source, token_id, side=side)
             loop = asyncio.get_event_loop()
             factor_output = await loop.run_in_executor(
                 self._executor,
@@ -1535,7 +1562,7 @@ class StrategyRunner:
             old_price = float(raw_old_price) if raw_old_price is not None else new_price
             market["_price_change"] = abs(new_price - old_price) / old_price * 100 if old_price > 0 else 0
             market["_netflow"] = netflow
-            market["_factor_score"] = sum(factor_output.signal_scores.values()) / len(factor_output.signal_scores) if factor_output.signal_scores else 0
+            market["_factor_score"] = factor_output.composite_score
             market["_factor_decision"] = factor_output.decision.value
             market["_factor_confidence"] = factor_output.confidence
             market["_factor_stop_loss"] = factor_output.stop_loss
@@ -1677,7 +1704,7 @@ class StrategyRunner:
                 return signal_log
 
             # Execute order
-            await self._execute_order(db, strategy, signal_log)
+            await self._execute_order(db, strategy, signal_log, data_source)
 
         strategy_exec_logger.info("[EXEC] returning signal_log type=%s status=%s", signal_log.signal_type, signal_log.status)
         for handler in strategy_exec_logger.handlers:
@@ -1978,20 +2005,21 @@ class StrategyRunner:
                 logger.warning("Token not found for position %s", position.id)
                 return
 
-            from py_clob_client.clob_types import MarketOrderArgs
-            from py_clob_client.order_builder.constants import SELL
+            from py_clob_client_v2 import MarketOrderArgs, PartialCreateOrderOptions, OrderType
+            from py_clob_client_v2.order_utils import Side
 
             order_args = MarketOrderArgs(
                 token_id=token_id,
                 amount=float(position.size),
-                side=SELL,
+                side=Side.SELL,
             )
+            options = PartialCreateOrderOptions(tick_size="0.01")
 
-            signed_order = await asyncio.to_thread(
-                self.clob_client.create_market_order, order_args
-            )
             result = await asyncio.to_thread(
-                self.clob_client.post_order, signed_order
+                self.clob_client.create_and_post_market_order,
+                order_args,
+                options,
+                OrderType.IOC,
             )
 
             # Update position
@@ -2009,6 +2037,7 @@ class StrategyRunner:
                 symbol=position.symbol,
                 side=position.side,
                 order_type="market",
+                time_in_force="IOC",
                 size=position.size,
                 filled_size=Decimal(str(result.get("size", position.size))),
                 status="filled",
@@ -2237,6 +2266,25 @@ class StrategyRunner:
             min_smart_money_threshold=params.get("min_smart_money_threshold", -1.0),
         )
 
+    def _is_sports_market(self, market: dict) -> bool:
+        """Check if a market is a sports market based on metadata."""
+        category = market.get("category", "")
+        if isinstance(category, str) and "sport" in category.lower():
+            return True
+        tags = market.get("tags", [])
+        if isinstance(tags, list):
+            for tag in tags:
+                if isinstance(tag, str) and "sport" in tag.lower():
+                    return True
+        question = market.get("question", "")
+        if isinstance(question, str):
+            sports_keywords = [" vs ", " versus ", "win the ", "championship", "super bowl", "world cup", "nba", "nfl", "mlb", "fifa"]
+            q_lower = question.lower()
+            for kw in sports_keywords:
+                if kw in q_lower:
+                    return True
+        return False
+
     def _build_market_context(
         self,
         market: dict,
@@ -2244,6 +2292,7 @@ class StrategyRunner:
         activity_data: Optional[ActivityData],
         data_source: DataSource,
         token_id: str,
+        side: str = "yes",
     ) -> BuyMarketContext:
         """Build BuyStrategy MarketContext from available data."""
         current_price = market_data.yes_price
@@ -2303,10 +2352,13 @@ class StrategyRunner:
             total_volume = activity_data.buy_volume + activity_data.sell_volume
             if total_volume > 0:
                 net_ratio = activity_data.netflow / total_volume
+                # Flip sign for NO side so net inflow into NO is favorable
+                if side == "no":
+                    net_ratio = -net_ratio
                 capital_flow = CapitalFlowMetrics(
                     smart_money_flow=min(1.0, max(-1.0, net_ratio * 2)),
-                    retail_flow=0.0,
-                    institutional_flow=0.0,
+                    retail_flow=0.0,  # placeholder: not currently used by BuyStrategy
+                    institutional_flow=0.0,  # placeholder: not currently used by BuyStrategy
                     flow_strength=min(1.0, abs(net_ratio) * 2 + 0.1),
                     trend_alignment=min(1.0, max(-1.0, net_ratio)),
                 )
@@ -2381,7 +2433,7 @@ class StrategyRunner:
 
         if not provider or not provider.api_key:
             logger.warning("No provider or API key found for strategy %s", strategy.id)
-            return self._generate_mock_ai_result(markets)
+            return None
 
         # Build prompts
         system_prompt = strategy.system_prompt or self._get_default_system_prompt()
@@ -2475,10 +2527,53 @@ class StrategyRunner:
                         await asyncio.sleep(wait)
                         continue
                     logger.error("AI API call failed: %s", e)
-                    return self._generate_mock_ai_result(markets)
+                    return self._build_factor_fallback(strategy, markets)
                 except Exception as e:
                     logger.error("AI API call failed: %s", e)
-                    return self._generate_mock_ai_result(markets)
+                    return self._build_factor_fallback(strategy, markets)
+
+    def _build_factor_fallback(self, strategy: Strategy, markets: list[dict]) -> Optional[dict]:
+        """Build AI result from quantitative factor scores when AI API is unavailable."""
+        if not markets:
+            return None
+
+        # Use strategy filter config for min_confidence
+        filter_config = strategy.filters if isinstance(strategy.filters, dict) else {}
+        min_confidence = filter_config.get('min_confidence', 40) / 100
+
+        best = max(markets, key=lambda m: m.get("_factor_score", 0))
+        factor_decision = best.get("_factor_decision", "hold")
+        if factor_decision not in ("buy", "strong_buy"):
+            return None
+
+        price = best.get("_current_price", best.get("price", 0.5))
+        side = best.get("_side", "yes")
+        confidence = min(0.95, max(min_confidence, best.get("_factor_score", 0.5)))
+        stop_loss = best.get("_factor_stop_loss")
+        take_profit = best.get("_factor_take_profit")
+        reasoning_lines = best.get("_factor_reasoning", [])
+
+        risk_reward = None
+        if stop_loss and take_profit and price:
+            risk = price - stop_loss
+            if risk > 0:
+                risk_reward = round((take_profit - price) / risk, 2)
+
+        return {
+            "action": "buy",
+            "side": side,
+            "confidence": round(confidence, 2),
+            "reasoning": "Factor fallback: " + "; ".join(reasoning_lines) if reasoning_lines else "Factor fallback decision due to AI unavailability",
+            "thinking": "AI unavailable (429/failure). Using quantitative factor scores as fallback.",
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk_reward": risk_reward,
+            "market_id": best.get("id", ""),
+            "symbol": best.get("symbol") or best.get("question") or best.get("slug") or best.get("id", "")[:20],
+            "model": "factor_fallback",
+            "duration_ms": 0,
+            "tokens_used": 0,
+        }
 
     def _get_default_system_prompt(self) -> str:
         """Get default system prompt for trading."""
@@ -2525,6 +2620,19 @@ Important:
         self, strategy: Strategy, markets: list[dict], factor_results: List[Tuple[str, BuyDecisionOutput]]
     ) -> str:
         """Build user prompt with market data and factor scores."""
+        # Map token_id -> factor output for enriched per-market details
+        factor_map = {token_id: output for token_id, output in factor_results}
+
+        # Default factor weights (mirror BuyStrategyConfig defaults)
+        default_weights = {
+            "odds_bias": 0.25,
+            "time_decay": 0.15,
+            "orderbook": 0.20,
+            "capital_flow": 0.20,
+            "information_edge": 0.10,
+            "sports_momentum": 0.15,
+        }
+
         markets_info = []
         for i, m in enumerate(markets):
             factor_lines = []
@@ -2534,6 +2642,33 @@ Important:
 
             factor_lines.append(f"    Factor Decision: {factor_decision} (confidence: {factor_conf:.2f})")
             factor_lines.append(f"    Factor Score: {factor_score:.2f}")
+
+            # Individual factor scores from BuyStrategy output
+            token_id = m.get("_token_id")
+            factor_output = factor_map.get(token_id) if token_id else None
+            if factor_output and factor_output.signal_scores:
+                scores = factor_output.signal_scores
+                individual = []
+                for key in ["odds_bias", "time_decay", "orderbook", "capital_flow", "information_edge", "sports_momentum"]:
+                    val = scores.get(key)
+                    if val is not None:
+                        individual.append(f"      {key}: {val:.3f}")
+                if individual:
+                    factor_lines.append("    Individual Factor Scores:")
+                    factor_lines.extend(individual)
+
+                factor_lines.append("    Factor Weights:")
+                for key, w in default_weights.items():
+                    factor_lines.append(f"      {key}: {w:.2f}")
+
+            # Netflow threshold based on price stage
+            price = m.get("_current_price", m.get("price", 0.5))
+            threshold = TriggerChecker.STAGE_THRESHOLDS[-1]["netflow"] if TriggerChecker.STAGE_THRESHOLDS else 150
+            for stage in TriggerChecker.STAGE_THRESHOLDS:
+                if stage["min_price"] <= price <= stage["max_price"]:
+                    threshold = stage["netflow"]
+                    break
+            factor_lines.append(f"    Netflow Threshold: ${threshold:,.0f} (price ${price:.2f})")
 
             if m.get("_factor_stop_loss"):
                 factor_lines.append(f"    Suggested Stop Loss: {m['_factor_stop_loss']:.3f}")
@@ -2573,48 +2708,6 @@ Explain how the factor scores influenced (or contradicted) your final decision."
 
         return prompt
 
-    def _generate_mock_ai_result(self, markets: list[dict]) -> dict:
-        """Generate mock AI result based on factor scores (deterministic)."""
-        if not markets:
-            return {
-                "action": "hold",
-                "side": "yes",
-                "confidence": 0.0,
-                "reasoning": "No markets available",
-                "thinking": "No markets match the filter criteria",
-                "stop_loss": None,
-                "take_profit": None,
-                "risk_reward": None,
-                "model": "mock",
-                "duration_ms": 0,
-                "tokens_used": 0,
-            }
-
-        # Pick the market with the highest factor score
-        best = max(markets, key=lambda m: m.get("_factor_score", 0))
-        price = best.get("_current_price", best.get("price", 0.5))
-        factor_score = best.get("_factor_score", 0.5)
-        factor_decision = best.get("_factor_decision", "hold")
-
-        action = "buy" if factor_decision in ("buy", "strong_buy") else "hold"
-        side = best.get("_side", "yes")
-        confidence = round(min(0.95, max(0.55, factor_score + 0.25)), 2)
-
-        return {
-            "action": action,
-            "side": side,
-            "confidence": confidence,
-            "reasoning": f"Mock analysis: Price at {price}, factor_score {factor_score:.2f}, confidence {confidence}",
-            "thinking": "This is a mock result for testing purposes",
-            "stop_loss": round(price * 0.9, 2) if action == "buy" else None,
-            "take_profit": round(price * 1.2, 2) if action == "buy" else None,
-            "risk_reward": 2.0,
-            "market_id": best.get("id", ""),
-            "symbol": best.get("symbol", ""),
-            "model": "mock",
-            "duration_ms": 100,
-            "tokens_used": 50,
-        }
 
     def _calculate_order_size(
         self, strategy: Strategy, confidence: float
@@ -2631,28 +2724,104 @@ Explain how the factor scores influenced (or contradicted) your final decision."
         db: AsyncSession,
         strategy: Strategy,
         signal_log: SignalLog,
+        data_source: Optional[DataSource] = None,
     ) -> None:
         """Execute order using py-clob-client v2 and create Position record."""
         if not self.clob_client:
             logger.error("ClobClient not initialized")
+            signal_log.status = "failed"
+            await db.commit()
             return
 
         market_id = signal_log.market_id
         if not market_id:
             logger.error("No market_id in signal")
+            signal_log.status = "failed"
+            await db.commit()
             return
+
+        # 1. Duplicate order check
+        existing_order = await db.execute(
+            select(Order).where(Order.signal_id == signal_log.signal_id)
+        )
+        if existing_order.scalar_one_or_none():
+            logger.warning("Duplicate order for signal %s, skipping execution", signal_log.signal_id)
+            signal_log.status = "rejected"
+            signal_log.signal_reason = (signal_log.signal_reason or "") + " | Rejected: duplicate order"
+            await db.commit()
+            return
+
+        # 2. Daily / weekly loss limit check
+        if strategy.max_daily_loss is not None or strategy.max_weekly_loss is not None:
+            from sqlalchemy import func
+            now = datetime.utcnow()
+            day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            week_start = day_start - timedelta(days=now.weekday())
+
+            daily_pnl_result = await db.execute(
+                select(func.coalesce(func.sum(Position.realized_pnl), Decimal("0")))
+                .where(
+                    Position.strategy_id == strategy.id,
+                    Position.status == "closed",
+                    Position.closed_at >= day_start,
+                )
+            )
+            daily_pnl = daily_pnl_result.scalar() or Decimal("0")
+
+            weekly_pnl_result = await db.execute(
+                select(func.coalesce(func.sum(Position.realized_pnl), Decimal("0")))
+                .where(
+                    Position.strategy_id == strategy.id,
+                    Position.status == "closed",
+                    Position.closed_at >= week_start,
+                )
+            )
+            weekly_pnl = weekly_pnl_result.scalar() or Decimal("0")
+
+            if not strategy.is_within_risk_limits(daily_pnl, weekly_pnl):
+                logger.warning(
+                    "Strategy %s risk limit exceeded: daily_pnl=%s weekly_pnl=%s",
+                    strategy.id, daily_pnl, weekly_pnl,
+                )
+                signal_log.status = "rejected"
+                signal_log.signal_reason = (
+                    (signal_log.signal_reason or "")
+                    + f" | Rejected: risk limit exceeded (daily={daily_pnl}, weekly={weekly_pnl})"
+                )
+                await db.commit()
+                return
 
         try:
             # Get token_id
             token_id = await self._get_token_id(market_id, signal_log.side)
             if not token_id:
-                logger.warning("Token not found for side: %s", signal_log.side)
-                return
+                raise ValueError(f"Token not found for side: {signal_log.side}")
 
-            # Execute as a marketable limit order to avoid py-clob-client
-            # market-order rounding bugs that violate tick-size rules.
-            from py_clob_client.clob_types import OrderArgs
-            from py_clob_client.order_builder.constants import BUY, SELL
+            # 3. Price freshness / slippage check
+            if signal_log.current_market_price and data_source and hasattr(data_source, "get_market_data"):
+                md = await data_source.get_market_data(token_id)
+                if md and md.yes_price > 0:
+                    current_price = md.yes_price
+                    signal_price = float(signal_log.current_market_price)
+                    if signal_price > 0:
+                        deviation = abs(current_price - signal_price) / signal_price
+                        slippage = float(strategy.slippage_tolerance or Decimal("0.001"))
+                        if deviation > slippage:
+                            logger.warning(
+                                "Price deviation %.4f > slippage %.4f for %s, rejecting order",
+                                deviation, slippage, token_id,
+                            )
+                            signal_log.status = "rejected"
+                            signal_log.signal_reason = (
+                                (signal_log.signal_reason or "")
+                                + f" | Rejected: price deviation {deviation:.4f} > slippage {slippage:.4f}"
+                            )
+                            await db.commit()
+                            return
+
+            # Execute via official py_clob_client_v2 market order API
+            from py_clob_client_v2 import MarketOrderArgs, OrderType, PartialCreateOrderOptions
+            from py_clob_client_v2.order_builder.constants import BUY, SELL
 
             order_side = BUY if signal_log.side == "yes" else SELL
             eval_price = float(signal_log.current_market_price or 0.5)
@@ -2664,110 +2833,196 @@ Explain how the factor scores influenced (or contradicted) your final decision."
                 # Sell at or slightly below market to ensure immediate fill
                 limit_price = max(0.01, round(eval_price - tick, 2))
 
-            # Size in OrderArgs is number of outcome tokens (shares).
-            shares = round(float(signal_log.size) / limit_price, 2)
-            if shares < 0.01:
-                shares = 0.01
+            # MarketOrderArgs: amount is dollar amount for BUY, shares for SELL
+            if order_side == BUY:
+                market_amount = float(signal_log.size)
+            else:
+                market_amount = round(float(signal_log.size) / limit_price, 2)
+                if market_amount < 0.01:
+                    market_amount = 0.01
 
-            order_args = OrderArgs(
+            order_args = MarketOrderArgs(
                 token_id=token_id,
-                price=limit_price,
-                size=shares,
                 side=order_side,
+                amount=market_amount,
+                price=limit_price,
             )
+            options = PartialCreateOrderOptions(tick_size="0.01", neg_risk=False)
 
-            signed_order = await asyncio.to_thread(
-                self.clob_client.create_order, order_args
-            )
+            # Build market order payload and post (IOC = Immediate Or Cancel)
             result = await asyncio.to_thread(
-                self.clob_client.post_order, signed_order
+                self.clob_client.create_and_post_market_order,
+                order_args,
+                options,
+                OrderType.IOC,
             )
 
-            fill_size = Decimal(str(result.get("size", signal_log.size)))
-            avg_price = signal_log.size and (Decimal(str(result.get("price", signal_log.size))) / signal_log.size) or Decimal("0")
-            # Use a simpler avg_fill_price estimate if not directly available
-            avg_fill_price = Decimal(str(result.get("price", 0))) or signal_log.stop_loss_price or Decimal("0.5")
+            if result is None:
+                raise ValueError("create_and_post_market_order returned None")
 
-            # Create Order record
+            # Normalize result to dict
+            result_dict = None
+            if isinstance(result, dict):
+                result_dict = result
+            elif hasattr(result, "__dict__"):
+                result_dict = result.__dict__
+            elif hasattr(result, "to_dict"):
+                result_dict = result.to_dict()
+            else:
+                raise ValueError(f"Unexpected result type: {type(result)}")
+
+            # Check API-level error (non-version-mismatch errors that didn't raise)
+            error_val = result_dict.get("error")
+            if error_val:
+                raise ValueError(f"CLOB API returned error: {error_val}")
+
+            # Extract order fields from various possible response shapes
+            exchange_order_id = None
+            raw_status = ""
+            raw_size = None
+            raw_price = None
+
+            # Shape 1: { "orders": [ { "orderId": "..." } ] }
+            orders_list = result_dict.get("orders")
+            if isinstance(orders_list, list) and orders_list:
+                first = orders_list[0]
+                if isinstance(first, dict):
+                    exchange_order_id = first.get("orderId") or first.get("order_id") or first.get("orderID")
+                    raw_status = str(first.get("status", "")).lower()
+                    raw_size = first.get("size")
+                    raw_price = first.get("price")
+
+            # Shape 2: direct fields on result
+            if not exchange_order_id:
+                exchange_order_id = (
+                    result_dict.get("orderID")
+                    or result_dict.get("order_id")
+                    or result_dict.get("orderId")
+                    or result_dict.get("id")
+                )
+            if not raw_status:
+                raw_status = str(result_dict.get("status", "")).lower()
+            if raw_size is None:
+                raw_size = result_dict.get("size")
+            if raw_price is None:
+                raw_price = result_dict.get("price")
+
+            # Map CLOB status to our status
+            status_map = {
+                "filled": "filled",
+                "matched": "filled",
+                "open": "open",
+                "pending": "pending",
+                "partial": "partially_filled",
+                "partially_filled": "partially_filled",
+                "cancelled": "cancelled",
+                "rejected": "rejected",
+                "expired": "expired",
+            }
+            order_status = status_map.get(raw_status, "pending")
+
+            # Calculate intended order size in shares
+            if order_side == BUY:
+                shares = Decimal(str(market_amount)) / Decimal(str(limit_price))
+            else:
+                shares = Decimal(str(market_amount))
+
+            fill_size = Decimal(str(raw_size)) if raw_size is not None else Decimal("0")
+            avg_fill_price = Decimal(str(raw_price)) if raw_price is not None else Decimal(str(limit_price))
+
+            # Create Order record with REAL status and exchange_order_id
             order = Order(
                 id=uuid4(),
                 portfolio_id=strategy.portfolio_id,
                 strategy_id=strategy.id,
                 signal_id=signal_log.signal_id,
                 market_id=signal_log.market_id,
-                symbol=signal_log.side,
+                symbol=signal_log.symbol or signal_log.market_id,
                 side=signal_log.side,
                 order_type="market",
-                size=signal_log.size,
-                filled_size=fill_size,
-                remaining_size=signal_log.size - fill_size,
-                status="filled",
-                avg_fill_price=avg_fill_price,
-                total_cost=fill_size * avg_fill_price,
+                time_in_force="IOC",
+                size=Decimal(str(shares)),
+                filled_size=fill_size if order_status in ("filled", "partially_filled") else Decimal("0"),
+                remaining_size=Decimal(str(shares)) - (fill_size if order_status in ("filled", "partially_filled") else Decimal("0")),
+                status=order_status,
+                avg_fill_price=avg_fill_price if order_status in ("filled", "partially_filled") else None,
+                total_cost=(fill_size * avg_fill_price) if order_status in ("filled", "partially_filled") else Decimal("0"),
                 source="signal",
+                exchange_order_id=exchange_order_id,
             )
             db.add(order)
 
-            # Create Position record for tracking
-            current_price = float(avg_fill_price) if avg_fill_price > 0 else 0.5
-            # Look up market title for display
-            market_title = ""
-            cached_market = self._market_cache.get(signal_log.market_id or "")
-            if cached_market:
-                market_title = cached_market.get("question") or cached_market.get("title") or ""
-            display_symbol = signal_log.symbol or market_title or signal_log.market_id
-            position = Position(
-                id=uuid4(),
-                portfolio_id=strategy.portfolio_id,
-                strategy_id=strategy.id,
-                market_id=signal_log.market_id,
-                symbol=display_symbol,
-                side=signal_log.side,
-                status="open",
-                size=fill_size,
-                entry_price=avg_fill_price,
-                current_price=avg_fill_price,
-                average_entry_price=avg_fill_price,
-                stop_loss_price=signal_log.stop_loss_price,
-                take_profit_price=signal_log.take_profit_price,
-                opened_at=datetime.utcnow(),
-                last_updated_at=datetime.utcnow(),
-                source="signal",
-                signal_id=str(signal_log.signal_id),
-                position_metadata={
-                    "market_name": display_symbol,
-                    "title": market_title or display_symbol,
-                    "outcome": signal_log.side,
-                },
-            )
-            db.add(position)
-            await db.commit()
-
-            # Register with flow exit system
-            self._flow_exit.register_position(
-                position_id=str(position.id),
-                entry_price=current_price,
-                size=float(fill_size),
-                side="long" if signal_log.side == "yes" else "short"
-            )
-
-            # Register with sports monitor (if data_source supports it)
-            data_source = self._data_source_manager._sources.get(strategy.portfolio_id)
-            if data_source and hasattr(data_source, "register_sports_position"):
-                stop_loss_pct = 0.10
-                if signal_log.stop_loss_price and avg_fill_price > 0:
-                    stop_loss_pct = float(
-                        abs(avg_fill_price - signal_log.stop_loss_price) / avg_fill_price
-                    )
-                data_source.register_sports_position(
-                    position_id=str(position.id),
-                    market_id=market_id,
-                    entry_price=current_price,
-                    stop_loss_pct=stop_loss_pct,
+            # Only create Position if the order is actually FILLED on-chain
+            if order_status == "filled":
+                current_price = float(avg_fill_price) if avg_fill_price > 0 else 0.5
+                # Look up market title for display
+                market_title = ""
+                cached_market = self._market_cache.get(signal_log.market_id or "")
+                if cached_market:
+                    market_title = cached_market.get("question") or cached_market.get("title") or ""
+                display_symbol = signal_log.symbol or market_title or signal_log.market_id
+                position = Position(
+                    id=uuid4(),
+                    portfolio_id=strategy.portfolio_id,
+                    strategy_id=strategy.id,
+                    market_id=signal_log.market_id,
+                    token_id=token_id,
+                    symbol=display_symbol,
                     side=signal_log.side,
+                    status="open",
+                    size=fill_size,
+                    entry_price=avg_fill_price,
+                    current_price=avg_fill_price,
+                    average_entry_price=avg_fill_price,
+                    stop_loss_price=signal_log.stop_loss_price,
+                    take_profit_price=signal_log.take_profit_price,
+                    opened_at=datetime.utcnow(),
+                    last_updated_at=datetime.utcnow(),
+                    source="signal",
+                    signal_id=str(signal_log.signal_id),
+                    position_metadata={
+                        "market_name": display_symbol,
+                        "title": market_title or display_symbol,
+                        "outcome": signal_log.side,
+                    },
+                )
+                db.add(position)
+                await db.commit()
+
+                # Register with flow exit system
+                self._flow_exit.register_position(
+                    position_id=str(position.id),
+                    entry_price=current_price,
+                    size=float(fill_size),
+                    side="long" if signal_log.side == "yes" else "short"
                 )
 
-            logger.info("Order placed and position created: %s, market=%s, side=%s", position.id, market_id, signal_log.side)
+                # Register with sports monitor (if data_source supports it)
+                data_source = self._data_source_manager._sources.get(strategy.portfolio_id)
+                if data_source and hasattr(data_source, "register_sports_position"):
+                    stop_loss_pct = 0.10
+                    if signal_log.stop_loss_price and avg_fill_price > 0:
+                        stop_loss_pct = float(
+                            abs(avg_fill_price - signal_log.stop_loss_price) / avg_fill_price
+                        )
+                    data_source.register_sports_position(
+                        position_id=str(position.id),
+                        market_id=market_id,
+                        entry_price=current_price,
+                        stop_loss_pct=stop_loss_pct,
+                        side=signal_log.side,
+                    )
+
+                logger.info(
+                    "Order filled and position created: exchange_order_id=%s local_order=%s market=%s side=%s",
+                    exchange_order_id, order.id, market_id, signal_log.side,
+                )
+            else:
+                await db.commit()
+                logger.info(
+                    "Order placed but not filled (status=%s): exchange_order_id=%s market=%s side=%s",
+                    order_status, exchange_order_id, market_id, signal_log.side,
+                )
 
         except Exception as e:
             logger.exception("Order execution failed: %s", e)

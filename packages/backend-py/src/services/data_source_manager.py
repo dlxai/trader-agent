@@ -598,6 +598,36 @@ class PolymarketDataSource(DataSource):
         # No activity data available yet
         return None
 
+    def get_market_stats(self, condition_id: str) -> Optional[dict]:
+        """Get raw activity stats for a single condition_id from WebSocket feed.
+
+        Returns a dict with real volume, price, trades etc. for cache-miss recovery.
+        """
+        if not self._activity_analyzer:
+            return None
+        ma = self._activity_analyzer.get_market_by_condition(condition_id)
+        if not ma:
+            return None
+        window = ma.get_window_metrics(300) or {}
+        return {
+            "condition_id": ma.condition_id,
+            "slug": ma.slug,
+            "question": ma.question,
+            "token_id": ma.token_id,
+            "total_volume": ma.total_volume,
+            "yes_volume": ma.yes_volume,
+            "no_volume": ma.no_volume,
+            "total_trades": ma.total_trades,
+            "unique_traders": len(ma.unique_traders),
+            "current_price": ma.current_price,
+            "price_change_1m": ma.price_change_1m,
+            "price_change_5m": ma.price_change_5m,
+            "activity_score": ma.activity_score,
+            "net_flow": window.get("net_flow", 0),
+            "window_trades": window.get("total_trades", 0),
+            "window_traders": window.get("trader_count", 0),
+        }
+
     def get_hot_markets(self, limit: int = 50, min_score: float = 0.1) -> list[dict]:
         """Get hot markets from ActivityAnalyzer (WebSocket-driven).
 
@@ -668,10 +698,22 @@ class PolymarketDataSource(DataSource):
         )
 
     def get_sports_signal(self, token_id: str) -> Optional[Dict[str, Any]]:
-        """Get sports-derived trading signal for a market (used in trigger logic)."""
+        """Get sports-derived trading signal for a market (used in trigger logic).
+
+        Supports both token_id and condition_id lookups since SportsMonitor
+        caches by market_id/condition_id/game_id.
+        """
         if not self._sports_monitor:
             return None
-        return self._sports_monitor.get_sports_signal(token_id)
+        # Try token_id directly first
+        result = self._sports_monitor.get_sports_signal(token_id)
+        if result:
+            return result
+        # Fallback: look up condition_id from token_id mapping
+        condition_id = self._token_to_condition.get(token_id)
+        if condition_id:
+            return self._sports_monitor.get_sports_signal(condition_id)
+        return None
 
 
 class SignalFilter:
@@ -723,7 +765,7 @@ class TriggerChecker:
     STAGE_THRESHOLDS = [
         {'min_price': 0.95, 'max_price': 0.999, 'netflow': 300},   # Stage1 Sweeping: 低门槛快进出
         {'min_price': 0.90, 'max_price': 0.95, 'netflow': 150},    # Stage2 Forming: 中等门槛
-        {'min_price': 0.85, 'max_price': 0.90, 'netflow': 600},    # Stage3 Early: 高门槛建仓
+        {'min_price': 0.851, 'max_price': 0.90, 'netflow': 600},   # Stage3 Early: 高门槛建仓
         # Stage4 (0.70-0.80) 已删除 - 完全在死亡区间内，死代码
     ]
 

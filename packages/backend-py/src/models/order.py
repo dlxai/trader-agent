@@ -6,7 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer, JSON
+from sqlalchemy import String, Numeric, ForeignKey, DateTime, Integer, JSON, UniqueConstraint
 
 from src.database import Base
 from .base import TimestampMixin, UUIDMixin
@@ -16,6 +16,10 @@ class Order(Base, TimestampMixin):
     """Order model for tracking trade orders."""
 
     __tablename__ = "orders"
+
+    __table_args__ = (
+        UniqueConstraint("signal_id", name="uq_order_signal_id"),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
     portfolio_id: Mapped[UUID] = mapped_column(
